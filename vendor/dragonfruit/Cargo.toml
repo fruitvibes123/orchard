@@ -1,0 +1,41 @@
+[package]
+name = "dragonfruit"
+version = "0.4.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "Operator-sovereign artifact-signing verify/sign core + canonical fixed-width statement format (ed25519 two-role cascade, Spec 1A). Pure-Rust, no FFI; verify-only by default, software signing behind `sign`."
+
+# `no_std`-clean so the C3 RP2350 firmware reuses the EXACT verify+statement core
+# Every dep is default-features=false → no std pulled in; `zeroize`
+# kept (the host ceremony relies on SigningKey ZeroizeOnDrop). The curve25519
+# backend is left to default (the M33 backend choice is C0 Spike C, not this lift).
+[dependencies]
+ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+sha2 = { version = "0.10", default-features = false }
+thiserror = { version = "2", default-features = false }
+
+# Dev-deps run on the HOST (std test harness) — they may re-enable std features via
+# unification, which is fine for `cargo test` and does not affect the thumbv8m build.
+[dev-dependencies]
+ed25519-dalek = "2"
+sha2 = "0.10"
+hex = "0.4"
+proptest = "1"
+# Negative-compile probes for the sealed types' non-convertibility (§8 AC3).
+# Dev-only host test tooling — OUT of the crypto-sentry shipped/build closed set by
+# design (tests/shipped_crate_allowlist.rs scope note: dev-deps excluded), never
+# reaches the firmware/box surface. NOTE: trybuild `.stderr` is rustc-version-
+# sensitive; a rust pin bump may need `TRYBUILD=overwrite cargo test --test
+# compile_fail` followed by a review of the regenerated expected-error files.
+trybuild = "1"
+
+[features]
+default = []
+sign = []
+# box-never-signs backstop. An opt-in that a build is a SANCTIONED off-box
+# signing context (host key-ceremony, the C3 firmware signer, orchard's .img/artifact signer, dev
+# fixture-minting). Empty — enables nothing; its ONLY effect is to satisfy the `compile_error!` guard at the
+# top of `sign.rs`, so compiling the software signer WITHOUT this flag fails the build. Target/host/
+# feature-name-AGNOSTIC where the external `cargo tree` CRUX gate is blind; defense-in-depth atop that gate,
+# never a replacement (a box graph enables NEITHER `sign` NOR this; see the spec's posture section).
+sanctioned-signer = []

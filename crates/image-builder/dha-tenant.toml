@@ -1,0 +1,190 @@
+# The dha AI-tenant manifest — the REAL creatine + dha-orchestrator + epa binaries as the box's 2nd
+# as a non-root, cgroup-bounded tenant: creatine (the warm inference engine) placed in `dha/creatine`,
+# the orchestrator in the delegated `dha/work/orch`, an RO dm-verity weights volume at `/models`, and an
+# `s6-permafailon` restart-cap on both longruns. The box RENDERS the run-scripts (cgroup placement +
+# `exec s6-setuidgid dha …` + creatine's inline `CREATINE_*` env) AND the two `dha`-owned 0600
+# orchestrator configs (`/etc/dha/{box.json,runtime.json}`) from the DECLARATIONS below, then IMA-signs
+# what it renders (the §7 renders-from-declarations seam — those bytes are the box's, not dha's). The
+# creatine/dha-orchestrator/epa bins are staged from the pinned binary supply chain (grocer → market).
+#
+# Build a dha .img from it (a from-pins GPT box + the pinned weights):
+#   RECIPES_DHA_WEIGHTS_GGUF=<qwen2.5-coder-1.5b-q2_k.gguf> orchard build --firmware seabios-gpt \
+#       --domain dha.test --manifest crates/image-builder/dha-tenant.toml \
+#       --operator-pubkey <k>.pub --recovery-pubkey <k>.pub --net '<static-net>' --out-dir <dir>
+# then point RECIPES_DHA_IMG (+ _PRIVKEY) at it and run `make boot-gate-dha`.
+schema_version = 1
+
+# (a) the tenant identity — uid 110, disjoint from the OS-fixed set (fb-acme 101 / fb-backup 102 /
+#     fb-cert-check 103 / haproxy 104 / dropbear 105) and from recipes/blogd (100). Both dha longruns
+#     drop to it; it is the `resource_domain.delegate_uid`.
+[[identities]]
+name = "dha"
+uid = 110
+
+# (b) the app env contract (inert for the stand-ins — present to exercise the env render for a non-recipes
+#     tenant; the stand-ins drop priv WITHOUT an s6-envdir, like the toy).
+[env]
+envdir = "/etc/dha/env"
+[env.vars]
+DHA_STATE_DIR = [ { text = { value = "/persist/dha" } } ]
+
+# (c) the two dha longruns — both `setuidgid dha`, each `RestartCap`ped (s6-permafailon). NAMES are
+#     load-bearing: `resource_domain.engine.service` / `.work.orchestrator` reference these, and the box
+#     places each in its fixed leaf (`creatine` → `dha/creatine`; `dha-orchestrator` → `dha/work/orch`;
+#     §4.3a). The box RENDERS the run-scripts (placement prologue + `exec s6-setuidgid dha …`) from these
+#     declarations + IMA-signs what it renders (§7 seam) — these bytes are the box's, not dha's.
+
+# creatine (the warm inference engine) — placed in `dha/creatine`, the killable ancestor-Σ OOM victim.
+# ENV-ONLY (no argv): `CREATINE_BIND` (the uds it serves), `CREATINE_MODEL_PATH` (the GGUF on the RO
+# weights volume at /models), `CREATINE_MODEL` (the model id). The box renders these as `export KEY='VAL'`
+# lines before the `s6-setuidgid` drop (which preserves the env). A flag form would silently serve the
+[[services]]
+name = "creatine"
+shape = { exec = { binary = "/usr/bin/creatine", argv = [], priv = { setuidgid = { user = "dha" } }, env = [ { key = "CREATINE_BIND", value = "unix:/run/creatine/creatine.sock" }, { key = "CREATINE_MODEL_PATH", value = "/models/model.gguf" }, { key = "CREATINE_MODEL", value = "qwen2.5-coder-3b" } ], restart_cap = { max_restarts = 3, window_secs = 30, events = { on_signal = true, on_nonzero_exit = true }, on_exhaust = { down = {} } } } }
+
+# dha-orchestrator — the submission dispatcher in the delegated `dha/work/orch`. Takes TWO positional
+# config paths: `box.json` (the Phase-1 confinement gate) then `runtime.json` (the deploy config); it
+# reads BOTH as the dropped `dha` uid (the box bakes them `dha`-owned 0600 on the signed rootfs). The
+# client `--root` is `Validated.root()` from box.json (never runtime.json → not divergeable). box-init
+# delegates `dha/work` to the dha uid; the harness (as dha) drives the `work/<id>` aggregate-Σ breach.
+[[services]]
+name = "dha-orchestrator"
+shape = { exec = { binary = "/usr/bin/dha-orchestrator", argv = [ { literal = { value = "/etc/dha/box.json" } }, { literal = { value = "/etc/dha/runtime.json" } } ], priv = { setuidgid = { user = "dha" } }, restart_cap = { max_restarts = 3, window_secs = 30, events = { on_signal = true, on_nonzero_exit = true }, on_exhaust = { down = {} } } } }
+
+# (d) the tenant resource domain — the opt-in cgroup budget box-init builds (root-owned `dha/` Σ ceiling
+#     + `dha/creatine` + the delegated `dha/work`). BOOT-GATE-SIZED so `Σ < VM_RAM − reserve` ⇒ the
+#     ancestor-Σ OOM is cgroup-scoped, not global (F2; the harness boots the VM at the prod 2048 MiB /
+#     2 GiB config). box-init's reserve is **512 MiB** — `box-init/src/cgroup.rs:27`, NOT the 256 this
+#     (~1939 MiB on a 2 GiB box), which passes with wide margin. NB `MemTotal` is usable RAM, always
+#     below the nominal VM size; sizing any Σ against the nominal number is a boot-loop waiting to happen.
+#     Cap-coherence (§4.1):
+#     Σ>0; engine.memory_max<Σ; job_memory_max∈(0,Σ]; work_pids_max>0; job_pids_max≤work_pids_max.
+[resource_domain]
+name = "dha"
+memory_max = 268435456        # Σ = 256 MiB — root-owned `dha/memory.max`, the box's whole stake
+delegate_uid = 110
+[resource_domain.engine]
+service = "creatine"
+memory_max = 134217728        # 128 MiB (< Σ) — creatine's own cap; the ideal ancestor-Σ OOM victim
+oom_group = true
+[resource_domain.work]
+orchestrator = "dha-orchestrator"
+job_memory_max = 33554432     # 32 MiB per `work/<id>` (∈ (0, Σ])
+job_pids_max = 64
+max_descendants = 16          # F3 cgroup-creation backstop (the tenant can't exceed it)
+max_depth = 2
+work_pids_max = 1024          # aggregate root-owned fork-bomb backstop (tenant-unliftable)
+
+# (d.5) the orchestrator gate configs (§4.3) — the box RENDERS these to `dha`-owned 0600 JSON on the
+#       signed rootfs (`/etc/dha/box.json` + `/etc/dha/runtime.json`), read by dha-orchestrator as the
+#       dropped `dha` uid. box.json = the Phase-1 confinement gate (the client `--root` = its `root`);
+#       runtime.json = the deploy config. `parent_cgroup` + `budget` are DERIVED from `resource_domain`
+#       at render time (image-builder), NOT declared here — single-sourced from the resource domain.
+[box_config]
+sensitive = true                  # dha is a sensitive tenant (the box.json gate tier)
+tier_b = false
+root = "/persist/dha"             # Validated.root() — the confined READ root (the box-init-created persist dir)
+secrets = "/run/dha-secrets"      # dha G-2: a present, cross-device (/run tmpfs vs /persist), outside-root secrets fs (box-init 0700 dha:dha)
+git = false
+creatine_mode = "uds"             # uds engine mode <=> the resource_domain engine leaf (creatine)
+
+[runtime_config]
+max_jobs = 4
+max_conns = 8
+socket_path = "/run/dha/orchestrator.sock"   # box-init pre-creates /run/dha 0700 dha:dha (M-6)
+client_oom_score_adj = 1000                  # the per-job client is the OOM victim (oom_score_adj +1000)
+[runtime_config.client]
+kind = "epa"                      # v1 epa-box (epa/pecan ship ring-tier; only dha-orchestrator is zero-C)
+program = "/usr/bin/epa"
+config = "/opt/dha/epa.json"      # epa's owner-only JSON config — a dha DELIVERABLE staged at /opt/dha (NOT /etc/dha, the box's RO rendered dir; cross-repo contract, like intake-probe.sh)
+[runtime_config.creatine]
+memory_events = "/sys/fs/cgroup/dha/creatine/memory.events"   # the creatine leaf's memory-pressure file
+uds = "/run/creatine/creatine.sock"                           # matches creatine's CREATINE_BIND
+service_dir = "/run/service/creatine"                         # the live s6 servicedir (s6-svstat probe)
+
+# (e) one app-domain boot-hook — a no-op (proves box-init parses + runs a non-recipes topology hook).
+[[boot_hooks]]
+name = "dha-init"
+binary = "/bin/busybox"
+argv = [ { literal = { value = "true" } } ]
+priv = { root = {} }
+order = 10
+timeout_secs = 30
+on_failure = { rescue = {} }
+
+#      /persist/acme/<domain>/full.pem and on a fresh box NOTHING else creates it, so without this
+#      hook haproxy is PARSE-FATAL ("unable to stat SSL certificate") and crash-loops under s6
+#      forever — measured on produced bytes 2026-07-25. It went unnoticed because this manifest's
+#      gate asserts cgroup confinement over SSH and never probes the edge.
+[[boot_hooks]]
+name = "bootstrap-acme-cert"
+binary = "/usr/bin/fb-oneshots"
+argv = [ { literal = { value = "selfsign-acme-cert" } }, { literal = { value = "--domain" } }, { placeholder = { name = "domain" } } ]
+priv = { setuidgid = { user = "fb-acme" } }
+order = 30
+timeout_secs = 60
+on_failure = { rescue = {} }
+
+# (f) the edge — a minimal backend (nothing serves it). The dha gate asserts cgroup confinement +
+#     survival over SSH, NOT an HTTP probe. haproxy DOES need its bootstrap cert to start at all,
+#     though — see (e2); the old "haproxy starts regardless" note here was wrong.
+[edge]
+backend = "127.0.0.1:8080"
+ca_file = "/persist/dha/ca.crt"
+redacted_paths = []
+redacted_query_params = []
+mtls_paths = []
+throttle_rules = []
+
+# (g) the persist dir created at boot (DHA_STATE_DIR — the real dha's restart-count lives here; the
+#     stand-in just needs the dir).
+[[persist]]
+path = "dha"
+uid = 110
+mode = 0o700
+
+# (h) the backup policy.
+[backup]
+sources = [ "dha" ]
+
+# (i) the health probe (unused by the dha gate; required by the schema).
+[probe]
+port = 443
+path = "/"
+
+# (j) the nftables ingress ports.
+[nftables]
+tcp_ports = [ 22, 443 ]
+
+#     fetch-verified from the supply chain and written onto the RO rootfs under /opt/dha (V1/V2: absolute,
+#     ≥2 segments below /opt). `uds-pipe` is a Binary (0755 root program — the std-only uds byte pump the
+#     probes use as transport, resolving `${DHA_UDS_PIPE:-/opt/dha/uds-pipe}`); the three probes are Config
+#     scripts (0644 root, shelled as `sh <script>`); `epa.json` is Config data (0600, owner=dha → baked
+#     dha:dha via the m-line + EVM h_misc). The dha-epa-config target satisfies V8 (it matches
+#     runtime_config.client.config = /opt/dha/epa.json). The four dha-* config keys enroll at the pin gate
+#     (Task 8, Approach-A): no test walks them against real pins until then; `uds-pipe` is already pinned.
+[[staged_files]]
+key = "uds-pipe"
+target = "/opt/dha/uds-pipe"
+mode = 0o755
+
+[[staged_files]]
+key = "dha-intake-probe"
+target = "/opt/dha/intake-probe.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-real-job-probe"
+target = "/opt/dha/real-job-probe.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-ac-i-selftest"
+target = "/opt/dha/ac-i-selftest.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-epa-config"
+target = "/opt/dha/epa.json"
+mode = 0o600
+owner = "dha"

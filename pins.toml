@@ -1,0 +1,96 @@
+# The project's central version manifest — the ONE place to bump the build-input pins that were
+# otherwise scattered. Only values WITHOUT an existing single home live here: the kernel pin (was
+# ~8-place: the fetch script + 6 Rust path refs + a doc — now the fetch script is retired and the
+# the retired flake), and the syslinux source pin (centralized here once `deploy build` gained a
+# pins-derived default tarball path). The Alpine BRANCH is NOT here — it lives in apk-world.toml (its
+# single home, read by `refresh-apk-lock`); duplicating it would re-create the scatter this file kills.
+#
+# Consumers (so a bump here propagates):
+#   • kernel.version / kernel.sha256  → crates/image-builder/src/sources.rs (the `orchard prime` fetch
+#       + the bake's verify-at-consumption) and crates/image-builder/src/pins.rs (the default kernel
+#   • syslinux.version / syslinux.sha256 → crates/image-builder/src/sources.rs (the `orchard prime` fetch
+#       + the bake's verify-at-consumption) and crates/image-builder/src/pins.rs (Pins::syslinux_tarball_path,
+#   • rust.* → GENERATED into rust-toolchain.toml and synced into the crates/image-builder/Containerfile
+#       by `orchard sync-pins`; format-locked to rustup / Docker (they can't read this file at runtime),
+#       and a make-verify drift-check (tests/pins_drift.rs) fails if they diverge. The toolchain
+#       components (toolchain_musl_*, std_uefi_*) are re-pinned by `market upgrade --rust` from a
+#       cashew-verified release manifest (Component C); see [rust]/[rust-keyring] below.
+#
+# BUMP PROCEDURE:
+#   1. Edit the value(s) below.
+#   2. kernel:   run `cargo run -p orchard -- market upgrade --kernel <ver>` — it fetches
+#                linux-<ver>.tar.{xz,sign}, PGP-verifies the tarball against the vendored
+#                keyring/kernel.org keys (pinned in [kernel-keyring] below), and writes ALL FOUR
+#                pins.toml copies + sync-pins atomically (stage-then-swap; nothing pinned on any
+#                failure). Manual fallback: re-pin kernel.sha256 by hand from kernel.org's signed
+#                sha256sums, then sync the sibling copies yourself.
+#      syslinux: re-pin syslinux.sha256 over the upstream tarball (matches the Alpine syslinux APKBUILD);
+#                a major bump also needs the SYSLINUX_ORG_BASE Testing/<major.minor>/ URL segment in
+#                crates/image-builder/src/sources.rs updated.
+#      rust:     run `cargo run -p orchard -- market upgrade --rust <ver>` — it fetches + cashew-verifies
+#                the Rust release manifest against keyring/rust-lang (pinned in [rust-keyring]), re-pins
+#                the toolchain component urls+shas, rebuilds the container, and writes all four copies
+#                (stage-then-swap). alpine_base_digest is bumped separately (docker manifest inspect).
+#   3. Run `cargo run -p orchard -- sync-pins` (regenerates the two
+#      format-locked files).
+#   4. `make verify` — the drift-check confirms every consumer agrees (incl. §3a-2: this file is
+#      byte-identical across seed-vault [canonical] + orchard + fruit-basket + recipes).
+#
+# Runtime-readable on purpose: the deploy tooling reads this to CONFIRM the build inputs (and, later, to
+# SELECT them, e.g. --kernel-version). Note rust is upstream of the CLI (it builds the CLI), so the
+# tooling can confirm-but-not-select rust; the kernel is a genuine selectable build input.
+
+[kernel]
+# linux-X.Y.Z source tarball from cdn.kernel.org; sha256 verified vs kernel.org's PGP-signed sums.
+version = "6.18.34"
+sha256 = "640c4732fb42842166db97e032c1fe7e5ff72c85a8982c75b40f74be3555d760"
+
+[syslinux]
+# syslinux-<ver> source tarball (kernel.org Testing/); sha256 verified, matching the Alpine 3.23
+# syslinux APKBUILD. Source-built (the apk ships no extractable core/VBR) into the B1 boot-fs template.
+version = "6.04-pre1"
+sha256 = "3f6d50a57f3ed47d8234fd0ab4492634eb7c9aaf7dd902f33d3ac33564fd631d"
+
+[rust]
+# The pinned stable Rust toolchain. Component C (`market upgrade --rust`) re-anchors this on the Rust
+# project's RELEASE SIGNING KEY (keyring/rust-lang/, pinned in [rust-keyring] below) instead of Docker
+# Hub's build of rust: the toolchain components below are fetched from static.rust-lang.org and their
+# shas come from a cashew-verified release manifest (PGP at bump, `sha256sum -c` at container build).
+version = "1.96.0"
+# The build container's FROM base — a plain Alpine, tag + digest-pinned (Docker Hub; alpine-from-source
+# is the separate paranoia cycle). Changed as an independent review event, NOT by a rust bump.
+alpine_base = "alpine:3.23"
+alpine_base_digest = "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
+# The PGP-verified host toolchain (rustc + cargo + musl std): the manifest-authenticated dated url + its
+# sha256 (the security anchor). [pkg.rust.target.x86_64-unknown-linux-musl].
+toolchain_musl_url = "https://static.rust-lang.org/dist/2026-05-28/rust-1.96.0-x86_64-unknown-linux-musl.tar.xz"
+toolchain_musl_sha256 = "8b4db404e24a82be906170b7b64bd69807e72e59d8371bac2a7f0ade75b39697"
+# The PGP-verified UEFI std (rambutan compiles for x86_64-unknown-uefi) — replaces `rustup target add`.
+# [pkg.rust-std.target.x86_64-unknown-uefi].
+std_uefi_url = "https://static.rust-lang.org/dist/2026-05-28/rust-std-1.96.0-x86_64-unknown-uefi.tar.xz"
+std_uefi_sha256 = "dd8d565f061389cef66f64aa65bbfabe01954e360ada0b39f1e0d637d588e4f6"
+# The self-assembled build image's digest — the reproducibility anchor (the double-build ROOTFS gate),
+# re-derived on every rebuild; NO LONGER the provenance root (that is the Rust key + the component shas).
+# NOTE: this still holds the PRE-Component-C rust:<ver>-alpine base digest (a stale placeholder — nothing
+# references it now the FROM is a self-assembled alpine); the operator's first `market upgrade --rust` or
+# `--all` rebuilds the container and re-pins this to the built-image id (RebuildContainer, §7).
+container_digest = "sha256:66f48b19d6e88519e2e58bebe0d945779a6a4ca41c2db17db78c9569655b50ac"
+
+[kernel-keyring]
+# Vendored kernel.org signer keyring (keyring/kernel.org/<file>, orchard repo): the bump-time PGP
+# trust anchor for `market upgrade --kernel` — the fetched tarball's detached .sign must verify
+# (cashew) against these keys BEFORE anything is pinned; the file bytes are checked against these
+# shas BEFORE cashew parses them, and market verify §3a-8 polices file⟷pin byte-exactness plus
+# nothing-unpinned-in-the-dir. Re-pin ONLY as a keyring-refresh review event —
+# see keyring/kernel.org/README.md (derivation, rotation, the pinned gpg toolchain).
+"gregkh.asc" = "9dbf6e08cfd1b08c5123596091fdef160dc8ff4be9b1ee8e8b4113b04387f87c"
+"sashal.asc" = "c4ed1898871201915d3e5f502925a877a43b772dab1eb93f0844f2d64584ac2a"
+
+[rust-keyring]
+# Vendored Rust release signer key (keyring/rust-lang/<file>, orchard repo): the bump-time PGP trust
+# anchor for `market upgrade --rust`. The Rust key self-signs SHA-1, so cashew loads it via the
+# documented `load_pinned_bare` exception — the sha256 pin below is the anchor (checked byte-exact
+# BEFORE parse; the fingerprint is grounded out-of-band vs Arch's `rust` PKGBUILD `validpgpkeys`).
+# Policed by market verify §3a-8 alongside [kernel-keyring]. Re-pin ONLY as a keyring-refresh review
+# event — see keyring/rust-lang/README.md.
+"rust-signing.asc" = "e54b09a439647e006b4831eec9785cbaaf3e07ab371c3a6ee6a68e1bdb9fbc6b"

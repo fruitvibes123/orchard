@@ -1,0 +1,8 @@
+# GENERATED FROM pins.toml by `orchard sync-pins` — DO NOT EDIT BY HAND.
+# Bump [rust].version in pins.toml, then run `orchard sync-pins`; the image-builder
+# tests/pins_drift.rs gate fails make verify if this file diverges. This pins the host /
+# dev / CI toolchain (rustup auto-installs it on first cargo invocation); the box's musl
+# binaries build in the Containerfile's alpine base + PGP-verified toolchain (pins.toml).
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

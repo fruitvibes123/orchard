@@ -1,0 +1,175 @@
+# the dha-tenant.toml derivative the `boot-gate-hotswap` v4 box builds from. Same tenant topology
+# (creatine + dha-orchestrator + epa from the pinned supply chain, the cgroup resource domain, the
+# /opt/dha staged set) with the THREE bench deltas the runtime-anchored model swap needs:
+#
+#   1. creatine binds TCP loopback 8377 (was uds): the swap's REAL-inference health probe
+#      (`fb-weights swap` → models.toml [health]) is an HTTP POST to 127.0.0.1:<port> — a
+#      uds-only engine would fail every post-swap health check. The orchestrator's uds dispatch
+#      (runtime_config.creatine.uds) is left pointing at the now-unbound socket: no hotswap AC
+#      submits a dha job, and a dispatch against it would fail visibly, not silently.
+#   2. CREATINE_MODEL = "hotswap-bench" — the served id is manifest-constant across model swaps
+#      (only the verity volume changes); the [health] probe body names the same id.
+#      CREATINE_LOWMEM=1 keeps the weights mmap-backed (file-backed ⇒ page-evictable under the
+#      engine cgroup; a mid-file dm-verity EIO surfaces at the faulting read — the §7 posture).
+#   3. The engine leaf gets inference headroom: Σ = 768 MiB, engine 640 MiB (the dha manifest's
+#      128 MiB is sized for the Σ-OOM breach legs, which are the dha gate's, not this one's).
+#      VM sizing: box-init's reserve is 512 MiB (box-init/src/cgroup.rs:27 — NOT 256, corrected after
+#      not the nominal 1536): Σ(768) + 512 = 1280 ≤ 1439 still holds, with 159 MiB to spare.
+#
+# Build the v4 bench box (a from-pins GPT box, runtime-anchored weights, NO fb.weights-* cmdline):
+#   RECIPES_DHA_WEIGHTS_GGUF=<models.toml-pinned .gguf> orchard build --firmware seabios-gpt \
+#       --weights-anchor runtime --domain hotswap.test \
+#       --manifest crates/image-builder/hotswap-tenant.toml \
+#       --keys-dir <artifact-keys> --operator-pubkey <k>.pub --recovery-pubkey <k>.pub \
+#       --net '<static-net>' --out-dir <dir>
+# then point RECIPES_HOTSWAP_IMG (+ the key envs) at it and run `make boot-gate-hotswap`.
+schema_version = 1
+
+# (a) the tenant identity — uid 110 (the dha-tenant value; disjoint from the OS-fixed set).
+[[identities]]
+name = "dha"
+uid = 110
+
+# (b) the app env contract (inert for this gate — the dha-tenant shape, kept).
+[env]
+envdir = "/etc/dha/env"
+[env.vars]
+DHA_STATE_DIR = [ { text = { value = "/persist/dha" } } ]
+
+# (c) the two tenant longruns. NAMES are load-bearing: `resource_domain.engine.service`
+#     references `creatine`, whose rendered run script carries the `fb-weights setup` prelude
+#     (EngineWeightsSetup::Runtime) + the placement prologue + these env exports.
+
+# creatine (the warm inference engine) — TCP loopback bind (bench delta 1), the health-probe
+[[services]]
+name = "creatine"
+shape = { exec = { binary = "/usr/bin/creatine", argv = [], priv = { setuidgid = { user = "dha" } }, env = [ { key = "CREATINE_BIND", value = "tcp:127.0.0.1:8377" }, { key = "CREATINE_MODEL_PATH", value = "/models/model.gguf" }, { key = "CREATINE_MODEL", value = "hotswap-bench" }, { key = "CREATINE_LOWMEM", value = "1" } ], restart_cap = { max_restarts = 3, window_secs = 30, events = { on_signal = true, on_nonzero_exit = true }, on_exhaust = { down = {} } } } }
+
+# dha-orchestrator — unchanged from dha-tenant.toml (present so the box shape stays the real
+# co-tenant topology; no hotswap AC drives it).
+[[services]]
+name = "dha-orchestrator"
+shape = { exec = { binary = "/usr/bin/dha-orchestrator", argv = [ { literal = { value = "/etc/dha/box.json" } }, { literal = { value = "/etc/dha/runtime.json" } } ], priv = { setuidgid = { user = "dha" } }, restart_cap = { max_restarts = 3, window_secs = 30, events = { on_signal = true, on_nonzero_exit = true }, on_exhaust = { down = {} } } } }
+
+# (d) the tenant resource domain — bench delta 3: inference headroom for a REAL model load
+#     (mmap'd weights are file-backed/evictable under the engine leaf; the anon KV/activation
+#     footprint needs the room). Cap-coherence (§4.1): Σ>0; engine.memory_max<Σ;
+#     job_memory_max∈(0,Σ]; work_pids_max>0; job_pids_max≤work_pids_max.
+[resource_domain]
+name = "dha"
+memory_max = 805306368        # Σ = 768 MiB; Σ + BOX_RESERVE(512) = 1280 ≤ MemTotal ~1439 on this bench VM
+delegate_uid = 110
+[resource_domain.engine]
+service = "creatine"
+memory_max = 671088640        # 640 MiB (< Σ) — real-inference headroom (bench delta 3)
+oom_group = true
+[resource_domain.work]
+orchestrator = "dha-orchestrator"
+job_memory_max = 33554432     # 32 MiB per `work/<id>` (∈ (0, Σ])
+job_pids_max = 64
+max_descendants = 16
+max_depth = 2
+work_pids_max = 1024
+
+# (d.5) the orchestrator gate configs — unchanged (uds dispatch is out of this gate's scope; see
+#       bench delta 1 above for why the engine itself binds tcp).
+[box_config]
+sensitive = true
+tier_b = false
+root = "/persist/dha"
+secrets = "/run/dha-secrets"
+git = false
+creatine_mode = "uds"
+
+[runtime_config]
+max_jobs = 4
+max_conns = 8
+socket_path = "/run/dha/orchestrator.sock"
+client_oom_score_adj = 1000
+[runtime_config.client]
+kind = "epa"
+program = "/usr/bin/epa"
+config = "/opt/dha/epa.json"
+[runtime_config.creatine]
+memory_events = "/sys/fs/cgroup/dha/creatine/memory.events"
+uds = "/run/creatine/creatine.sock"   # UNBOUND on this bench (the engine binds tcp — delta 1)
+service_dir = "/run/service/creatine"
+
+# (e) one app-domain boot-hook — a no-op (the dha-tenant shape, kept).
+[[boot_hooks]]
+name = "dha-init"
+binary = "/bin/busybox"
+argv = [ { literal = { value = "true" } } ]
+priv = { root = {} }
+order = 10
+timeout_secs = 30
+on_failure = { rescue = {} }
+
+#      /persist/acme/<domain>/full.pem and on a fresh box NOTHING else creates it, so without this
+#      hook haproxy is PARSE-FATAL ("unable to stat SSL certificate") and crash-loops under s6 —
+#      measured on produced bytes 2026-07-25. That matters MORE here than on dha-tenant: this
+#      can never reach.
+[[boot_hooks]]
+name = "bootstrap-acme-cert"
+binary = "/usr/bin/fb-oneshots"
+argv = [ { literal = { value = "selfsign-acme-cert" } }, { literal = { value = "--domain" } }, { placeholder = { name = "domain" } } ]
+priv = { setuidgid = { user = "fb-acme" } }
+order = 30
+timeout_secs = 60
+on_failure = { rescue = {} }
+
+#     the box" probe, which is exactly why it needs its bootstrap cert — see (e2).
+[edge]
+backend = "127.0.0.1:8080"
+ca_file = "/persist/dha/ca.crt"
+redacted_paths = []
+redacted_query_params = []
+mtls_paths = []
+throttle_rules = []
+
+# (g) the persist dir created at boot.
+[[persist]]
+path = "dha"
+uid = 110
+mode = 0o700
+
+# (h) the backup policy.
+[backup]
+sources = [ "dha" ]
+
+# (i) the health probe (unused by the hotswap gate; required by the schema).
+[probe]
+port = 443
+path = "/"
+
+# (j) the nftables ingress ports.
+[nftables]
+tcp_ports = [ 22, 443 ]
+
+# (k) the /opt/dha staged files — unchanged from dha-tenant.toml (pinned in consume-pins; keeping
+#     them keeps this box buildable from the same pin set as the dha box).
+[[staged_files]]
+key = "uds-pipe"
+target = "/opt/dha/uds-pipe"
+mode = 0o755
+
+[[staged_files]]
+key = "dha-intake-probe"
+target = "/opt/dha/intake-probe.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-real-job-probe"
+target = "/opt/dha/real-job-probe.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-ac-i-selftest"
+target = "/opt/dha/ac-i-selftest.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-epa-config"
+target = "/opt/dha/epa.json"
+mode = 0o600
+owner = "dha"

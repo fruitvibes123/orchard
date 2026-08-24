@@ -1,0 +1,79 @@
+[package]
+name = "orchard"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-only"
+
+# Orchard — the operator-host build/deploy factory CLI, lifted out of the recipes
+# image-builder pipeline + the artifact-signing ceremony + the offline host-key
+# precompute, and NEVER ships in the box image. The CRUX "box never signs"
+# confinement is structural: dragonfruit[sign] is a dep of THIS operator-host crate
+# only, unreachable from any in-image binary.
+
+[[bin]]
+name = "orchard"
+path = "src/main.rs"
+
+[lib]
+name = "orchard"
+path = "src/lib.rs"
+
+[dependencies]
+# Build pipeline (the apk/kernel/squashfs/verity bake).
+recipes-image-builder = { path = "../image-builder" }
+# the restore image via the SAME no-privilege ext4 reader the boot-fs bake trusts. A DIRECT edge —
+# the ceremony names the crate it trusts; no image-builder re-export pass-through.
+syslinux-install = { path = "../syslinux-install" }
+# Host-key derivation (the offline rescue precompute + the deploy-prod reconnect pin).
+grape = { path = "../../vendor/grape" }
+# The artifact-signing verify/sign core. The `sign` feature lives ONLY here. `sanctioned-signer` opts THIS
+# guard fails any `sign` build lacking it; a box graph carries NEITHER token.
+dragonfruit = { path = "../../vendor/dragonfruit", features = ["sign", "sanctioned-signer"] }
+toml = "0.8"
+zeroize = "1"
+# Pure-Rust squashfs reader for the offline `derive-rescue-offline --image` mode (xz-only).
+backhand = { version = "0.25", default-features = false, features = ["xz"] }
+# The verify-only OpenPGP/RSA checker (in-workspace) — the `market upgrade --kernel` PGP verify
+# against the vendored keyring/kernel.org trust anchor. Zero net-new external crates (cashew
+# delegates crypto to the in-tree rsa/sha2/sha1/base64).
+cashew = { path = "../cashew" }
+# `zeroize` wipes SigningKey's internal seed on drop. Requested DIRECTLY here (not just
+# transitively via dragonfruit) so the seed-zeroization control can't silently regress if a
+# transitive dep drops the feature (F-2); the Task 9 feature-guard asserts it stays active.
+ed25519-dalek = { version = "2", features = ["zeroize"] }
+# host-grade floor → XChaCha20-Poly1305 (192-bit random nonce) passphrase-wrap of the at-rest
+# root+worker seeds. Pure-Rust (RustCrypto). `password-hash`/PHC strings deliberately excluded —
+# the wrap uses the raw `hash_password_into_with_memory` KDF with a caller-owned, zeroized memory
+# buffer (see keywrap.rs `derive_key`). NOTE: argon2's `zeroize` feature wipes only its small
+# finalize/initial-hash temporaries, NOT the memory-hard matrix — keywrap owns+wipes that itself.
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# Direct dep ONLY to enable poly1305's `zeroize` feature on the instance chacha20poly1305
+# uses transitively (Cargo unifies features across the graph): chacha20poly1305 0.10.1 requests
+# `zeroize` on chacha20 but NOT on poly1305, leaving its one-time-MAC `State` (r/h/pad) un-wiped.
+# referenced in code — the edge exists solely for the feature.
+poly1305 = { version = "0.8", default-features = false, features = ["zeroize"] }
+# RSA-3072 keygen for the Secure Boot PK/KEK/db family (ceremony-time keygen only).
+rsa = "0.9"
+sha2 = "0.10"
+x509-parser = "0.16"
+hex = "0.4"
+base64 = "0.22"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto", "ring", "x509-parser", "zeroize"] }
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"
+rpassword = "7"
+tempfile = "3"
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Raw-syscall surface (O_NOFOLLOW opens in keys.rs; prctl/flock/sigaction in prod.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Test-only: build APKINDEX.tar.gz fixtures for the `market outdated` fake fetcher (both already
+flate2 = "1"
+tar = "0.4"

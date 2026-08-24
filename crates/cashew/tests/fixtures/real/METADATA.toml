@@ -1,0 +1,51 @@
+#
+# Key material comes from the AUTHORITATIVE kernel.org pgpkeys.git ONLY — never a keyserver (a stale
+# keyserver copy of Greg's key lacked his 2026-05 re-signatures and showed 2011 SHA-1 material; the
+# R2 audit reproduced exactly that trap). See tests/fixtures/README.md to regenerate.
+
+pgpkeys_commit = "ebb799f8016c129731873ac4c0beafa68617b2a4"
+gpg            = "2.4.9"
+libgcrypt     = "1.12.2"
+
+# fixture_now: a SINGLE evaluation clock shared by the real anchors AND the generated corpus. It must
+# be ≥ the newest real governing self-signature (Greg re-signed greg@kroah.com 2026-05-04 = 1777899577)
+# AND > the generated corpus's gen_time (1781000000 = 2026-06-09, the faked stamp on the throwaway
+# keys/sigs) so nothing generated is future-dated. 1781100000 = 2026-06-10 satisfies both; the real
+# .sign (2024) and real primaries (never expire) verify under it — the normal "old signature, current
+fixture_now = 1781100000
+
+[greg]
+pin_fingerprint = "647F28654894E3BD457199BE38DBBDC86092693E"
+file            = "greg-pruned.asc"
+armored_bytes   = 3439
+sha256          = "9dbf6e08cfd1b08c5123596091fdef160dc8ff4be9b1ee8e8b4113b04387f87c"
+primary_created = 1316795861          # 2011-09-23; [SC], the signing key (no signing subkey exists)
+uids            = 3
+signing_subkeys = 0
+# trust-granting self-cert hash algos, in packet order (10 = SHA-512, 8 = SHA-256): all whitelisted.
+trust_granting_hash_algos = [10, 8, 8]
+# keep-uid mbox expression recorded for re-derivation (multiple live UIDs joined with gpg's `||`):
+keep_uid = "mbox=greg@kroah.com || mbox=gregkh@kernel.org || mbox=gregkh@linuxfoundation.org"
+
+[sasha]
+pin_fingerprint = "E27E5D8A3403A2EF66873BBCDEA66FF797772CDC"
+file            = "sasha-pruned.asc"
+armored_bytes   = 1644
+sha256          = "c4ed1898871201915d3e5f502925a877a43b772dab1eb93f0844f2d64584ac2a"
+primary_created = 1328804765          # 2012-02-09; [SC]
+uids            = 1                    # pruned to sashal@kernel.org only (dead-employer UIDs dropped)
+signing_subkeys = 0
+trust_granting_hash_algos = [10]       # the one surviving self-cert is SHA-512
+keep_uid = "mbox=sashal@kernel.org"
+
+[real_sign]
+file          = "linux-6.6.30.tar.sign"
+bytes         = 989
+sha256        = "8b17b8d9ac0da718f0a679f0621686260126da9ab9797157de350d7c59b8548c"
+# PRIMARY, and its digest is SHA-256 — the operative kernel.org shape (primary-signs, no subkey).
+sig_version     = 4
+sig_class       = "0x00"              # binary document
+pubkey_algo     = 1                  # RSA
+hash_algo       = 8                  # SHA-256
+sig_created     = 1714660433          # 2024-05-02
+issuer_fpr      = "647F28654894E3BD457199BE38DBBDC86092693E"   # == greg.pin_fingerprint

@@ -1,0 +1,329 @@
+# tenant topology at the box's REAL deployment configuration: a 2B model on a 2 GiB box.
+#
+# buffered whole in the target's RAM. Proven against a bench-shaped artifact those greens describe
+# margins that never deploy, so this manifest + the `prod-cotenant` models.toml profile (the
+# Qwen3-VL-2B pair) are what make the evidence representative.
+# MEASURED on the produced bytes: its `.img` is 1,892,032,512 B = 1804.4 MiB against a 2048 MiB guest —
+# just UNDER guest RAM, so the retired whole-image installer (image in a Vec + room to run) still could
+# not have installed it: 1804.4 + the 256 MiB installer minimum = 2060.4 > 2048.0. That margin is only
+# `image > RAM` is wrong here, and treat a failure of that bar as "re-measure", not "loosen a constant".
+#
+# SCOPE, precisely (WIDENED 2026-07-25 — operator: "the cotenant needs to serve recipes"; spec
+# now the COMPOSITION of the pinned reference recipes tenant (`service-manifest@d73fd02f…` — the artifact
+# the reference box is built from) and the dha AI topology. The box SERVES recipes over haproxy AND runs
+# the AI tenant confined.
+#
+# Why it had to widen: the partition layout is FIXED at install and `orchard update` only refreshes
+# rootfs+kernel WITHIN that shape, so a box installed from the AI-only manifest could never gain the
+# recipes tenant without a wipe + full re-provision. That is the standing 2026-07-17 decision (memory
+# ON"), learned the hard way twice — the 2026-07-16 live push and the creatine-bench-v2 weights partition.
+#
+# STILL DEFERRED — the recipes↔epa CROSS-TENANT SEAM: the two tenants coexist here but recipes does not
+# CALL the AI tenant. Transport is already settled (MCP over stdio via `epa-mcp`) and the recipes-side
+# consumer is specced + plan-ready; the BOX wiring is the gap. Precise statement of what is settled, what
+#
+# Build a prod .img from it (a from-pins GPT box + the pinned VL pair):
+#   RECIPES_DHA_WEIGHTS_GGUF=<qwen3-vl-2b-instruct-q4km.gguf> orchard build --firmware seabios-gpt \
+#       --domain <domain> --manifest crates/image-builder/prod-cotenant.toml \
+#       --operator-pubkey <k>.pub --recovery-pubkey <k>.pub --net '<static-net>' --out-dir <dir>
+# The projector is picked up from the model GGUF's directory by its pinned name (or point
+# RECIPES_DHA_MMPROJ_GGUF at it); both shas are verified fail-closed at bake.
+schema_version = 1
+
+# (a) the TWO tenant identities — recipes 100 (the serving tenant) + dha 110 (the AI tenant), both
+#     disjoint from the OS-fixed set (fb-acme 101 / fb-backup 102 / fb-cert-check 103 / haproxy 104 /
+#     dropbear 105).
+[[identities]]
+name = "recipes"
+uid = 100
+
+[[identities]]
+name = "dha"
+uid = 110
+
+# (b) the app env contract — the recipes envdir, adopted VERBATIM from the pinned reference manifest
+#     (recipes + fb-acme-serve + fb-acme-renew all name `/etc/recipes/env` in their `priv.setuidgid`).
+#
+# WHY NOT ALSO A dha ENVDIR: `ValidatedManifest.env` is SINGULAR (fb-manifest manifest.rs:488) — one
+# `[env]` per manifest, unlike the `Vec` sections. The dha services do not need one: `creatine` and
+# `dha-orchestrator` carry inline `env = [...]` in their service shapes and their `priv.setuidgid` has
+# no `envdir` key, so they never read an envdir. The AI-only manifest's lone var `DHA_STATE_DIR` had
+# NO CONSUMER — verified 2026-07-25 by grep over both box repos AND the pinned tenant binaries
+# (`epa`, `dha-orchestrator`, `creatine-serve`) and every staged config/script: zero hits. The same
+[env]
+envdir = "/etc/recipes/env"
+[env.vars]
+DATA_DIR = [ { text = { value = "/persist/recipes" } } ]
+DATABASE_PATH = [ { text = { value = "/persist/recipes/recipes.db" } } ]
+SHOPPING_LIST_DIR = [ { text = { value = "/persist/recipes/shopping-lists" } } ]
+IMAGE_DIR = [ { text = { value = "/persist/recipes/images" } } ]
+SECRETS_DIR = [ { text = { value = "/persist/recipes/secrets" } } ]
+PUBLIC_URL = [ { text = { value = "https://" } }, { placeholder = { name = "domain" } } ]
+ACME_CHALLENGE_DIR = [ { text = { value = "/run/fb-acme/challenges" } } ]
+ROCKET_ADDRESS = [ { text = { value = "127.0.0.1" } } ]
+ROCKET_PORT = [ { text = { value = "8000" } } ]
+
+# (b.5) the recipes tenant longruns + the OS periodics it owns — adopted VERBATIM from the pinned
+#       reference manifest. `recipes` is what answers haproxy's backend and therefore what makes
+#       `deploy_prod` step 10's 303 assertion true on this box.
+[[services]]
+name = "recipes"
+shape = { exec = { binary = "/usr/bin/recipes", argv = [], priv = { setuidgid = { user = "recipes", envdir = "/etc/recipes/env" } } } }
+
+[[services]]
+name = "fb-acme-serve"
+shape = { exec = { binary = "/usr/bin/fb-acme", argv = [ { literal = { value = "serve" } } ], priv = { setuidgid = { user = "fb-acme", envdir = "/etc/recipes/env" } } } }
+
+[[services]]
+# `--acme-mode production` is stated EXPLICITLY on purpose. fb-acme's clap default is already
+# Production (`fb-acme/src/main.rs`, "ACME directory to target (production burns real rate limits)"),
+# so omitting it changed nothing functionally — but it left WHICH CERTIFICATE AUTHORITY a production
+# box talks to inherited from a default in another repo. A flip of that default would silently
+# re-point every box built from this manifest, and the manifest is the artifact under review. Say it
+# here, where a reader and an auditor can see it. (Whitelist-over-blacklist / explicit-over-implicit;
+# the gate's own protection against reaching LE is the hermetic guest, not this line.)
+name = "fb-acme-renew"
+shape = { periodic_loop = { binary = "/usr/bin/fb-acme", argv = [ { literal = { value = "renew" } }, { literal = { value = "--domain" } }, { placeholder = { name = "domain" } }, { literal = { value = "--acme-mode" } }, { literal = { value = "production" } }, { literal = { value = "--min-epoch" } }, { placeholder = { name = "source_date_epoch" } } ], interval_secs = 86400, priv = { setuidgid = { user = "fb-acme", envdir = "/etc/recipes/env" } } } }
+
+[[services]]
+name = "fb-backup"
+shape = { periodic_loop = { binary = "/usr/bin/fb-backup", argv = [ { literal = { value = "/persist/recipes" } } ], interval_secs = 86400, priv = { root = {} } } }
+
+[[services]]
+name = "fb-cert-check"
+shape = { periodic_loop = { binary = "/usr/bin/fb-cert-check", argv = [ { template = { fragments = [ { literal = { value = "/persist/acme/" } }, { placeholder = { name = "domain" } }, { literal = { value = "/full.pem" } } ] } } ], interval_secs = 86400, priv = { root = {} } } }
+
+# (c) the two tenant longruns. NAMES are load-bearing: `resource_domain.engine.service` /
+#     `.work.orchestrator` reference these, and the box places each in its fixed leaf.
+
+# creatine (the warm inference engine) — UDS bind: epa → creatine over the unix socket is the live
+# plumbing, and the orchestrator's dispatch (runtime_config.creatine.uds) targets the same path.
+#
+#
+# THE TEXT LANE IS WHAT SHIPS. qwen3vl's TEXT half serves through creatine's existing codon allowlist,
+# and the currently-specced recipes AI-pipeline (clean / re-translate) is text-only by operator ruling —
+# so 100% of the specced pipeline runs on binaries that exist today. On the anon axis the text lane sits
+# far inside the caps below.
+#
+# DELIBERATELY ABSENT: `CREATINE_MMPROJ_PATH` and `CREATINE_TOWER_CACHE`. `creatine-serve` has no mmproj
+# load path yet (its `main.rs` reaches `families::load_engine` → `Qwen2Engine::load`, single-GGUF;
+# `load_with_mmproj_cached` exists but no serve path reaches it, and CREATINE_TOWER_CACHE is read only
+# INSIDE that unreached function). Baking either would put an env var here that does nothing — and a
+# dead env is indistinguishable at the gate from a working one. They land with creatine's vision-oracle
+# envelope cycle, which also brings the §5.1 handwriting bake-off's go/no-go on 2B vision quality.
+#
+# FORWARD NOTE (carry into the next consume-bump): the first creatine bump that includes unit A brings
+# the serve-side alloc cache — set `CREATINE_ALLOC_CACHE_MB` explicitly here then (or `=0` for
+# passthrough), rather than inheriting its default into a 2 GiB box's budget.
+#
+# CREATINE_LOWMEM=1 suppresses the gen/repack SECOND resident copy of the repackable weights (a ~1.2 GiB
+# anon duplicate on the 3B profile) — that is what it does, and on a 2 GiB box it is not optional.
+#   It does NOT control mmap-backing: the weight planes are file-backed because the S-GGUF own loader
+#   maps them (`creatine/src/gguf.rs`), independent of this flag. The file-backed property is what makes
+#   the planes reclaimable under the engine cap and what makes a mid-file dm-verity EIO surface at the
+#   faulting read rather than at load — but it is the LOADER's doing, not this variable's. (An earlier
+[[services]]
+name = "creatine"
+shape = { exec = { binary = "/usr/bin/creatine", argv = [], priv = { setuidgid = { user = "dha" } }, env = [ { key = "CREATINE_BIND", value = "unix:/run/creatine/creatine.sock" }, { key = "CREATINE_MODEL_PATH", value = "/models/model.gguf" }, { key = "CREATINE_MODEL", value = "qwen3-vl-2b-instruct" }, { key = "CREATINE_LOWMEM", value = "1" } ], restart_cap = { max_restarts = 3, window_secs = 30, events = { on_signal = true, on_nonzero_exit = true }, on_exhaust = { down = {} } } } }
+
+# dha-orchestrator — the submission dispatcher in the delegated `dha/work/orch`. Takes TWO positional
+# config paths: `box.json` (the Phase-1 confinement gate) then `runtime.json` (the deploy config).
+[[services]]
+name = "dha-orchestrator"
+shape = { exec = { binary = "/usr/bin/dha-orchestrator", argv = [ { literal = { value = "/etc/dha/box.json" } }, { literal = { value = "/etc/dha/runtime.json" } } ], priv = { setuidgid = { user = "dha" } }, restart_cap = { max_restarts = 3, window_secs = 30, events = { on_signal = true, on_nonzero_exit = true }, on_exhaust = { down = {} } } } }
+
+# (d) the tenant resource domain — sized against box-init's ADMISSION PREDICATE first, then against
+#     creatine's measured text-lane floors.
+#
+# THE CEILING (verified against fruit-basket SOURCE, not a comment — an earlier revision of this file
+# took a sibling manifest's word for it and was wrong by 2×, which would have BOOT-LOOPED the box):
+#   `box-init/src/cgroup.rs:27`  BOX_RESERVE_BYTES = 512 MiB   (NOT 256)
+#   `box-init/src/cgroup.rs:109` need = Σ + BOX_RESERVE;  `:114` if need > mem_total -> Err -> fatal()
+#
+# And `mem_total` is `MemTotal` from /proc/meminfo — total USABLE RAM, always strictly less than the
+# nominal VM size (kernel image, memmap, reserved e820 regions come off the top). Measured on this box's
+# own kernel at `-m 2048`: 2,096,632 K present, 110,732 K reserved => MemTotal ~= 1939-1944 MiB. So
+# sizing against the NOMINAL 2048 is itself a bug: the real ceiling is
+#   Σ <= MemTotal - 512 MiB ~= 1427 MiB.
+#
+# Σ = 1344 MiB: 1344 + 512 = 1856 MiB, ~88 MiB under the measured MemTotal — margin for MemTotal
+# varying with kernel/firmware, which is the whole reason not to size to the exact ceiling.
+#
+# THE ENGINE LEAF. This box serves the TEXT lane only (no mmproj wire yet — see (c)), so the relevant
+# footprint is the text-only one: the S-GGUF own loader maps the weight planes file-backed, leaving
+# ~0.08 GiB anon at load plus the ~1.04 GiB text plane as reclaimable page cache (~1.12 GiB together).
+# engine = 1216 MiB holds that resident with ~69 MiB of headroom.
+#   NB the vision figures in `creatine/docs/research/2026-07-17-tower-cache-decide.md` (anon 0.133
+#   post-image, 1.92 GiB peak) are the CACHED-TOWER columns — a path this manifest does not enable, and
+#   an image lane it does not run. They are not the basis for these caps; the text-lane numbers above are.
+#
+# WHY SIZE FROM THE ANON FLOOR AT ALL: cgroup v2 `memory.max` charges page cache as well as anon, but the
+# weights planes are CLEAN verity-RO file pages — instantly reclaimable, no writeback, no swap. Under
+# pressure the cgroup reclaims and re-faults; it OOMs only if ANON alone exceeds the cap. So the cap is
+# sized to keep the working set resident for SPEED, while correctness rests on the much smaller anon floor.
+#
+# Cap-coherence (§4.1): Σ>0; engine.memory_max<Σ; job_memory_max∈(0,Σ]; work_pids_max>0;
+# job_pids_max≤work_pids_max.
+[resource_domain]
+name = "dha"
+memory_max = 1409286144       # Σ = 1344 MiB — root-owned `dha/memory.max`, the box's whole stake
+delegate_uid = 110
+[resource_domain.engine]
+service = "creatine"
+memory_max = 1275068416       # 1216 MiB (< Σ) — holds the measured TEXT-lane working set resident
+oom_group = true
+[resource_domain.work]
+orchestrator = "dha-orchestrator"
+job_memory_max = 33554432     # 32 MiB per `work/<id>` (∈ (0, Σ])
+job_pids_max = 64
+max_descendants = 16          # cgroup-creation backstop (the tenant can't exceed it)
+max_depth = 2
+work_pids_max = 1024          # aggregate root-owned fork-bomb backstop (tenant-unliftable)
+
+# (d.5) the orchestrator gate configs — the box RENDERS these to `dha`-owned 0600 JSON on the signed
+#       rootfs. `parent_cgroup` + `budget` are DERIVED from `resource_domain` at render time.
+[box_config]
+sensitive = true
+tier_b = false
+root = "/persist/dha"
+secrets = "/run/dha-secrets"
+git = false
+creatine_mode = "uds"         # uds engine mode <=> the resource_domain engine leaf (creatine)
+
+[runtime_config]
+max_jobs = 4
+max_conns = 8
+socket_path = "/run/dha/orchestrator.sock"
+client_oom_score_adj = 1000
+[runtime_config.client]
+kind = "epa"
+program = "/usr/bin/epa"
+config = "/opt/dha/epa.json"
+[runtime_config.creatine]
+memory_events = "/sys/fs/cgroup/dha/creatine/memory.events"
+uds = "/run/creatine/creatine.sock"           # matches creatine's CREATINE_BIND
+service_dir = "/run/service/creatine"
+
+# (e) the app-domain boot-hooks. The first three are adopted VERBATIM from the pinned reference
+#     manifest; `bootstrap-acme-cert` is the one that writes the self-signed `/persist/acme/<domain>/
+#     full.pem` — without it haproxy's `bind *:443` is PARSE-FATAL and the box serves nothing. That was
+#     measured on produced bytes 2026-07-25 on the AI-only image, which declared none of these.
+#     `dha-init` keeps its no-op role at order 25 — between bootstrap-ca (20) and bootstrap-acme-cert
+#     (30), so it stays inside the app-domain band. It was briefly moved to 40 to dodge the collision
+#     with set-hostname's 10, but 40 is box-init's OS_KEYS_STAGE_ORDER (oneshots.rs:179), whose
+#     contract is "AFTER the app-domain hooks (max 30)" — that RELOCATED the collision onto the OS
+#     for a `busybox true`, and it leaves the three verbatim-adopted hooks' orders untouched.
+[[boot_hooks]]
+name = "set-hostname"
+binary = "/usr/bin/fb-oneshots"
+argv = [ { literal = { value = "set-hostname" } }, { literal = { value = "--fallback" } }, { placeholder = { name = "domain" } } ]
+priv = { root = {} }
+order = 10
+timeout_secs = 30
+on_failure = { rescue = {} }
+
+[[boot_hooks]]
+name = "bootstrap-ca"
+binary = "/usr/bin/recipes-admin"
+argv = [ { literal = { value = "bootstrap-ca" } } ]
+priv = { setuidgid = { user = "recipes", envdir = "/etc/recipes/env" } }
+order = 20
+timeout_secs = 60
+on_failure = { rescue = {} }
+
+[[boot_hooks]]
+name = "bootstrap-acme-cert"
+binary = "/usr/bin/fb-oneshots"
+argv = [ { literal = { value = "selfsign-acme-cert" } }, { literal = { value = "--domain" } }, { placeholder = { name = "domain" } } ]
+priv = { setuidgid = { user = "fb-acme" } }
+order = 30
+timeout_secs = 60
+on_failure = { rescue = {} }
+
+[[boot_hooks]]
+name = "dha-init"
+binary = "/bin/busybox"
+argv = [ { literal = { value = "true" } } ]
+priv = { root = {} }
+order = 25
+timeout_secs = 30
+on_failure = { rescue = {} }
+
+# (f) the edge — the REAL recipes route-set, adopted VERBATIM from the pinned reference manifest.
+#     Replaces the AI-only placeholder (`backend 127.0.0.1:8080` with nothing behind it, and an EMPTY
+#     `mtls_paths` which rendered a bare `acl is_android_api` with no criterion → haproxy PARSE-FATAL,
+#     measured on produced bytes 2026-07-25). That defect is FIXED on this branch by debt-burndown's
+#     Component A — `config.rs::compose_mtls_gate_block` renders the whole §(3) block conditionally,
+#     so an empty `mtls_paths` emits a single comment instead of a criterion-less `acl is_android_api`.
+#     (This header previously claimed the fix was "still owed" for dha/hotswap/toy-tenant; that was
+#     masked the defect anyway, which is why the stale claim survived review.)
+[edge]
+backend = "127.0.0.1:8000"
+ca_file = "/persist/recipes/ca.crt"
+redacted_paths = [ "/api/pair/", "/invite/", "/share/", "/shared-plans/", "/share-links/" ]
+redacted_query_params = [ "via" ]
+mtls_paths = [ "/api/v1/", "/download/" ]
+throttle_rules = [
+    { paths = [ "/login", "/recover" ], match = "exact", max_req_rate = 10 },
+    { paths = [ "/api/pair/" ], match = "prefix", max_req_rate = 10 },
+]
+
+# (g) the persist dirs created at boot — one per tenant.
+[[persist]]
+path = "recipes"
+uid = 100
+mode = 0o700
+
+[[persist]]
+path = "dha"
+uid = 110
+mode = 0o700
+
+# (h) the backup policy — adopted VERBATIM from the reference: `fb-backup`'s argv is the data root
+#     `/persist/recipes`, and these paths are relative to it. `BackupSpec` is SINGULAR
+#     (fb-manifest manifest.rs:493), so there is one policy per manifest.
+#
+#     The AI-only manifest declared `sources = ["dha"]` but never declared an `fb-backup` service, so
+#     that policy was inert — nothing is being lost here that was working. Whether dha job state is
+#     worth persisting (and at what size) is its own decision, deliberately not made here.
+[backup]
+sources = [ "images", "shopping-lists", "secrets", "ca.crt" ]
+vacuum_target = "recipes.db"
+
+# (i) the health probe (required by the schema).
+[probe]
+port = 443
+path = "/"
+
+# (j) the nftables ingress ports. 80 is REQUIRED (it was absent on the AI-only manifest): fb-acme's
+#     HTTP-01 challenge is served there, and haproxy's :80 frontend denies everything else with 410.
+[nftables]
+tcp_ports = [ 22, 80, 443 ]
+
+# (k) the /opt/dha staged files — the pinned transport + probe scripts + epa's config, fetch-verified
+#     from the supply chain and written onto the RO rootfs under /opt/dha.
+[[staged_files]]
+key = "uds-pipe"
+target = "/opt/dha/uds-pipe"
+mode = 0o755
+
+[[staged_files]]
+key = "dha-intake-probe"
+target = "/opt/dha/intake-probe.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-real-job-probe"
+target = "/opt/dha/real-job-probe.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-ac-i-selftest"
+target = "/opt/dha/ac-i-selftest.sh"
+mode = 0o644
+
+[[staged_files]]
+key = "dha-epa-config"
+target = "/opt/dha/epa.json"
+mode = 0o600
+owner = "dha"

@@ -1,0 +1,64 @@
+[package]
+name = "recipes-image-builder"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "Operator-side builder: fetch + verify + extract pinned Alpine apks behind a source-agnostic acquisition seam (Plan 3.4v2). Host-side (gnu); not in the musl image."
+
+[dependencies]
+flate2 = "1"
+tar = "0.4"
+sha2 = "0.10"
+# (not just tests), so hex must be a normal dependency, not dev-only.
+hex = "0.4"
+sha1 = { version = "0.10", features = ["oid"] }
+rsa = { version = "0.9", features = ["pem"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+# HTTPS fetch for the production HttpFetcher. ureq (rustls + ring) over reqwest: a builder's
+# apk GET doesn't need hyper/tower/tokio; ureq is the minimal-surface fit + ring (no aws-lc /
+# openssl / native-tls — enforced by the workspace surface-cut sentry). default-features off
+# drops the auto-decompress features (gzip/brotli) — removes the HTTP-layer decompress-bomb vector.
+ureq = { version = "2", default-features = false, features = ["tls"] }
+# orchard's kernel_bump — already in the workspace closure via orchard (whose direct entry moves
+liblzma = "0.4.6"
+# Task 1.1 crate: deterministic rescue host-key SEED derivation (build-time derive_seed).
+grape = { path = "../../vendor/grape" }
+# renders every output from a fb_manifest::ValidatedManifest sub-struct (the reference-tenant manifest
+# = today's hardcoded recipes values; goldens stay byte-identical).
+fb-manifest = { path = "../../vendor/fb-manifest" }
+zeroize = "1"
+# R.4 (3/n) deterministic IMA/EVM signer. p256 = RFC-6979 ECDSA — the nonce is HMAC-derived from
+# key+message (no RNG), so the security.ima/security.evm xattr sigs are byte-identical run-to-run.
+# evmctl's OpenSSL path randomizes the nonce (OpenSSL <3.2 has no RFC-6979 mode; 3.2+ needs a per-op
+# param evmctl never sets) → non-reproducible. pkcs8+pem loads the rcgen-emitted ima.key (PKCS#8 PEM).
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem"] }
+# Parse the IMA leaf cert's SubjectKeyIdentifier → the be32 keyid the kernel matches on (id[1] suffix).
+x509-parser = "0.16"
+# Read each staged file's existing security.capability (no privilege needed) so it's folded into the
+# portable-EVM hash in evm_config_default_xattrnames order; host-side getxattr on the staging bind-mount.
+xattr = "1"
+# mksquashfs `-pf` xattr values are encoded as `0s<base64>` (NOT `0x<hex>`): mksquashfs 4.7.4's `0x`
+# parser SEGFAULTs on values >8 bytes, while the `0s` base64 path handles our ~80-byte sigs cleanly.
+base64 = "0.22"
+# Build-time staging tempdir for `deploy build` orchestration (RAII cleanup).
+tempfile = "3"
+# The B1 boot-fs installer (Task 4): pure-Rust syslinux patch-area writer + read-only ext4 reader.
+# `bake_boot_fs` preps the source-built ldlinux.sys then patches it (+ the VBR) in place after the
+# no-privilege `mke2fs -d`, so the box's boot partition is bootable without ever running extlinux/CAP.
+syslinux-install = { path = "../syslinux-install" }
+# NOTE (Task 2.3 .img CMS sign): the RustCrypto `cms` 0.3.x line was the chosen
+# NOT compile against the current dep ecosystem (broad API skew vs its moved-on RC
+# contemporaries). The sign-crate deps are pending the version decision — see the
+# conversation / the deploy-gate memory.
+
+[dev-dependencies]
+hex = "0.4"
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+# R.4 (3/n) signer tests: generate a throwaway P-256 self-signed cert + PKCS#8 PEM key exactly as the
+# generate-keys ceremony makes ima.key/ima.crt (ring backend), to exercise key-load + keyid-from-SKID.
+rcgen = { version = "0.13", default-features = false, features = ["pem", "crypto", "ring"] }

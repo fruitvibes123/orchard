@@ -1,0 +1,11 @@
+error[E0277]: the trait bound `WindowUncheckedArtifact: From<VerifiedArtifact>` is not satisfied
+ --> tests/compile_fail/no_from_conversions.rs:6:14
+  |
+6 |     let _ = <dragonfruit::WindowUncheckedArtifact as core::convert::From<
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<VerifiedArtifact>` is not implemented for `WindowUncheckedArtifact`
+
+error[E0277]: the trait bound `VerifiedArtifact: From<WindowUncheckedArtifact>` is not satisfied
+ --> tests/compile_fail/no_from_conversions.rs:9:14
+  |
+9 |     let _ = <dragonfruit::VerifiedArtifact as core::convert::From<
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<WindowUncheckedArtifact>` is not implemented for `VerifiedArtifact`

@@ -1,0 +1,77 @@
+# whose app/identity/service/boot-hook are NOT recipes: it proves `orchard build --manifest <path>`
+# de-hardcodes the topology (a non-recipes manifest builds + boots its own services), and feeds the
+# E.4 toy-render no-leak gate. Its services reuse `/bin/busybox` (already in the image), so the toy
+# needs NO new app crate and NO build_binaries change (the recipes binaries stay staged-but-unused —
+# build_binaries/whitelist staying recipes-hardcoded is the §7/post-split de-hardcoding gap, accepted
+# no-op boot-hook proving box-init parses + runs a non-recipes topology hook.
+schema_version = 1
+
+# (a) the tenant identity baked into /etc/passwd+group — uid 200, disjoint from the OS-fixed set.
+[[identities]]
+name = "widget"
+uid = 200
+
+# (b) the app env contract (written to the envdir; the toy service drops priv WITHOUT an s6-envdir,
+#     so these are inert — present only to exercise the env render for a non-recipes tenant).
+[env]
+envdir = "/etc/recipes/env"
+[env.vars]
+WIDGET_DATA = [ { text = { value = "/persist/widget" } } ]
+
+# (c) the tenant longrun — a supervised always-up service (busybox in a periodic loop). Drops to the
+#     widget identity. ntpd/dropbear/haproxy/rescue-dropbear stay OS-invariant renderer templates.
+[[services]]
+name = "widget"
+shape = { periodic_loop = { binary = "/bin/busybox", argv = [ { literal = { value = "true" } } ], interval_secs = 3600, priv = { setuidgid = { user = "widget" } } } }
+
+# (e) one app-domain boot-hook — box-init parses the baked topology + runs this pre-supervision.
+[[boot_hooks]]
+name = "widget-init"
+binary = "/bin/busybox"
+argv = [ { literal = { value = "true" } } ]
+priv = { root = {} }
+order = 10
+timeout_secs = 30
+on_failure = { rescue = {} }
+
+#      /persist/acme/<domain>/full.pem and on a fresh box NOTHING else creates it, so without this
+#      hook haproxy is PARSE-FATAL ("unable to stat SSL certificate") and crash-loops under s6 —
+#      measured on produced bytes 2026-07-25. Kept here too so the generalization manifest stays a
+#      FAITHFUL minimal tenant: a non-recipes tenant that cannot start its edge is not the thing
+#      this manifest claims to prove.
+[[boot_hooks]]
+name = "bootstrap-acme-cert"
+binary = "/usr/bin/fb-oneshots"
+argv = [ { literal = { value = "selfsign-acme-cert" } }, { literal = { value = "--domain" } }, { placeholder = { name = "domain" } } ]
+priv = { setuidgid = { user = "fb-acme" } }
+order = 30
+timeout_secs = 60
+on_failure = { rescue = {} }
+
+# (a) the edge route-set — a minimal backend (nothing serves it, but haproxy itself starts: see (e2)).
+[edge]
+backend = "127.0.0.1:8080"
+ca_file = "/persist/widget/ca.crt"
+redacted_paths = []
+redacted_query_params = []
+mtls_paths = []
+throttle_rules = []
+
+# (d) the persist dir created at boot.
+[[persist]]
+path = "widget"
+uid = 200
+mode = 0o700
+
+# (g) the backup policy.
+[backup]
+sources = [ "widget" ]
+
+# (f) the health probe.
+[probe]
+port = 443
+path = "/"
+
+# (h) the nftables ingress ports.
+[nftables]
+tcp_ports = [ 22, 443 ]

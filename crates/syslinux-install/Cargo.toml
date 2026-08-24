@@ -1,0 +1,24 @@
+# Pure-Rust, no-privilege, deterministic syslinux (extlinux) installer — the B1 mechanism of the
+# (a loop-mount to FIBMAP/FIEMAP the on-disk sector map) by parsing the ext4 extent tree out of a
+# baked boot-fs image directly, then porting syslinux 6.04-pre1's `syslxmod.c::syslinux_patch` to
+# patch `ldlinux.sys`'s patch-area + the VBR for that placement. NO mount, NO CAP_SYS_ADMIN, no exec.
+#
+# Promoted from the B1 spike (commits f8b90d9..36939bc, findings installer-b1-spike-findings.md) to a
+# root workspace member (Task 4). Consumed by `recipes-image-builder`'s `bake_boot_fs`. Hand-rolled,
+# zero deps — the ext4 reader is scoped to the boot-fs shape (depth-0 extent trees + linear dirs),
+# asserted fail-closed, not a general ext4 implementation.
+[package]
+name = "syslinux-install"
+license = "GPL-2.0-only"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "syslinux_install"
+path = "src/lib.rs"
+
+# Dev-only: gunzip the committed real-bake fixture for the read_file positive test. Already in the
+# workspace lock via image-builder — no new external crate ships (the shipped dep set stays zero).
+[dev-dependencies]
+flate2 = "1"

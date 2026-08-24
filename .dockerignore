@@ -1,0 +1,8 @@
+target/
+android/
+**/.git
+data/
+*.log
+.direnv/
+.cargo/config.toml
+humanloop.txt

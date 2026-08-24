@@ -1,0 +1,18 @@
+# The §3a-7 file-level allowlist for `market verify` (the hot cert-presence leg) / `--cert-presence` /
+# `--certs`.
+#
+# the pins they built/converged from — a from-pins boot record, or an audit report citing a pin as
+# evidence — rather than CERTIFY that a pin is current. Such a file takes this reviewed allowlist, NEVER a
+# false `certifies-pin:` marker (the build-record vs current-cert vs superseded-cert trichotomy; spec
+#
+# Adding a file here exempts it from cert-presence policing. It is correct ONLY for records/reports (dated,
+# immutable snapshots that don't go "stale" in the certification sense), never for a living cert that
+# asserts a pin is current — those carry `certifies-pin:` (current) or `superseded-by:` (bumped) markers IN
+# the file. Re-derive the set any time with `market verify --cert-presence` (it rots within a version bump,
+# so never hand-trust an old list — run the rule). Populated by the Task-8 retrofit (2026-06-23).
+schema-version = 1
+files = [
+    # Populate with your own cert-trail build-records / evidence-quoting reports (paths relative
+    # to the configured cert-trail root). The operator ecosystem's entries are maintained in the
+    # canonical (private) checkout.
+]

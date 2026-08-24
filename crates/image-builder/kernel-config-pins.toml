@@ -1,0 +1,142 @@
+# Required kernel CONFIG symbols — the build-time assertion (mirrors the deployment-overhaul
+# spec's build-pipeline CONFIG-assertion block). Checked against the produced `.config` AFTER
+# `make olddefconfig`, BEFORE `make` builds the kernel. Catches the silent-drop regression class:
+# leaving lockdown (defense layer 5) absent for 7 audit rounds.
+#
+# exact_match: the `.config` line must match exactly (e.g. `CONFIG_IMA=y`). A `=n` entry asserts
+# the symbol is DISABLED — kconfig writes that as `# CONFIG_X is not set`, never `CONFIG_X=n`, so
+# the assertion accepts that canonical form (the spec's literal `grep -qx "^CONFIG_X=n$"` would
+# never match a real .config — see kernel.rs).
+exact_match = [
+    # --- security / defense-by-composition (spec: defense layers 4/5/6) ---
+    "CONFIG_SECURITY_LOCKDOWN_LSM=y",
+    "CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y",
+    "CONFIG_LOCK_DOWN_KERNEL_FORCE_INTEGRITY=y",
+    "CONFIG_MODULES=n",
+    "CONFIG_IMA=y",
+    "CONFIG_IMA_APPRAISE=y",
+    "CONFIG_IMA_APPRAISE_REQUIRE_POLICY_SIGS=y",
+    "CONFIG_IMA_LOAD_X509=y",
+    # The cert PATHS the kernel reads at init (ima_init.c:109 / evm_main.c:1109). Pinned (audit I-4)
+    # so a kernel default-drift away from where the initramfs places the leaf DERs
+    # (build_tools_host.rs build_initramfs) is caught at the CONFIG-assert gate, not at QEMU boot.
+    # Defaults VERIFIED == these values vs the pinned 6.18.33 source (ima/Kconfig:289, evm/Kconfig:74)
+    # and the emitted .config; the assertion is exact-line, hence the embedded quotes.
+    'CONFIG_IMA_X509_PATH="/etc/keys/x509_ima.der"',
+    "CONFIG_EVM=y",
+    "CONFIG_EVM_LOAD_X509=y",
+    'CONFIG_EVM_X509_PATH="/etc/keys/x509_evm.der"',
+    # The keyring link-restriction chain (audit M-1 R4). INTEGRITY_TRUSTED_KEYRING is what INSTALLS
+    # restrict_link_by_digsig_builtin on .ima/.evm — i.e. the rule that rejects any key not chaining
+    # to the operator CA on .builtin_trusted_keys (the heart of appraisal trust). It is default-y but
+    # depends on the other three; the fragment declares all four, but WITHOUT pinning them a silent
+    # olddefconfig drop (the demonstrated R8 class — REQUIRE_POLICY_SIGS was dropped via this very
+    # chain) would leave the keyrings UNRESTRICTED with no build-time signal. All four are =y in the
+    # validated .config (verified byte-exact), so a good build still passes.
+    "CONFIG_INTEGRITY_SIGNATURE=y",
+    "CONFIG_INTEGRITY_ASYMMETRIC_KEYS=y",
+    "CONFIG_SYSTEM_TRUSTED_KEYRING=y",
+    "CONFIG_INTEGRITY_TRUSTED_KEYRING=y",
+    "CONFIG_SECURITY_YAMA=y",
+    "CONFIG_BPF_JIT=n",
+    # CONFIG_INITRAMFS_PRESERVE_XATTRS (in the spec's list) REMOVED — it is a PHANTOM symbol,
+    # absent from mainline 6.18.33 (grep -rl over the whole tree: zero hits). R8 class
+    # CONFIG-list correction. (initramfs cpio xattr handling is not gated by this symbol.)
+    # --- functional FS / device-mapper (CONFIG_MODULES=n → must be built-in) ---
+    "CONFIG_EXT4_FS=y",
+    "CONFIG_SQUASHFS=y",
+    "CONFIG_SQUASHFS_XZ=y",
+    # kernel can't see the IMA sigs -> layer 6 silently fails). depends on SQUASHFS (present).
+    "CONFIG_SQUASHFS_XATTR=y",
+    "CONFIG_TMPFS=y",
+    "CONFIG_TMPFS_POSIX_ACL=y",
+    "CONFIG_DM_VERITY=y",
+    "CONFIG_BLK_DEV_DM=y",
+    "CONFIG_BLK_DEV_LOOP=y",
+    "CONFIG_NET=y",
+    "CONFIG_INET=y",
+    # refuse autoconfig at runtime) — NOT compiled out, because the inet-table ip6/icmpv6 nft rule would
+    # then fail nft -f, and nftables-load is the one OnFailure::Reboot oneshot → boot-loop. Inherited from
+    # the Alpine linux-virt base today (in neither config file pre-this-pin); pinning it makes a drift to
+    # =n/=m fail the build-time CONFIG-assert gate, not the QEMU boot.
+    "CONFIG_IPV6=y",
+    "CONFIG_NETFILTER=y",
+    "CONFIG_NF_TABLES=y",
+    "CONFIG_VIRTIO_NET=y",
+    "CONFIG_VIRTIO_BLK=y",
+    # --- kvm-clock / paravirt clocksource (M-2, network-bringup holistic R2) ---
+    # having KVM_GUEST + PARAVIRT_CLOCK → a drift-free kvm-clock clocksource by construction; the ACME
+    # `--min-epoch` issuance gate leans on kvm-clock supplying correct wall-time before ntpd steps. Both
+    # were inherited UNPINNED from the Alpine linux-virt base (the same silent-drop exposure the IPV6 pin
+    # closed). Pin both so a base-config/olddefconfig drift fails the build-time CONFIG-assert, not a
+    # silent clock regression (the QEMU/KVM boot-gate wouldn't catch it — kvm-clock is present there
+    # regardless of the guest CONFIG). KVM_GUEST=y selects PARAVIRT_CLOCK; both are asserted belt-and-braces.
+    "CONFIG_KVM_GUEST=y",
+    "CONFIG_PARAVIRT_CLOCK=y",
+    # --- disk transports (C3 portability, audit L-1): pin the boot-disk drivers a KVM hypervisor may
+    #     present — virtio-scsi / NVMe / emulated SATA-AHCI, plus the shared SCSI midlayer + sd driver
+    #     (virtio-blk is CONFIG_VIRTIO_BLK above). The vps-kvm USB shed is USB-ONLY so these STAY; pinning
+    #     them (force-set in kernel-hardening.config + asserted here) makes a base drift that drops a
+    #     transport FAIL the build, not silently ship a box that can't boot on that hypervisor's disk.
+    #     SHARED — both substrates (bare-metal boots off a SATA / USB-storage disk on the same sd stack).
+    "CONFIG_SCSI=y",
+    "CONFIG_BLK_DEV_SD=y",
+    "CONFIG_SCSI_VIRTIO=y",
+    "CONFIG_ATA=y",
+    "CONFIG_SATA_AHCI=y",
+    "CONFIG_BLK_DEV_NVME=y",
+    "CONFIG_NVME_CORE=y",
+    # ONE plain kernel serves BOTH firmwares. EFI/EFI_STUB make the bzImage a PE the
+    # rambutan loader can LoadImage (and the firmware re-verify vs db under SB); they
+    # are bootability pins, NOT a boot-policy carrier — policy lives in the signed
+    # loader. The four console symbols are the UEFI tty0 chain (firmware framebuffer →
+    # simpledrm → fbcon) so a halted verified boot is DIAGNOSABLE on a screen;
+    # the Alpine linux-virt base (verified in the pinned 6.18.34 .config); pinning
+    # Harmless on SeaBIOS (EFI stub dormant; fbcon already in use).
+    "CONFIG_EFI=y",
+    "CONFIG_EFI_STUB=y",
+    "CONFIG_SYSFB=y",
+    "CONFIG_SYSFB_SIMPLEFB=y",
+    "CONFIG_DRM_SIMPLEDRM=y",
+    "CONFIG_FRAMEBUFFER_CONSOLE=y",
+    "CONFIG_PROC_FS=y",
+    "CONFIG_SYSFS=y",
+    "CONFIG_DEVTMPFS=y",
+    "CONFIG_DEVTMPFS_MOUNT=y",
+    "CONFIG_PRINTK=y",
+    # --- cgroup-v2 memory controller (dha AI-tenant confinement — the C1 keystone, §4.0) ---
+    # The box's MODULES=n from-source kernel must SHIP the cgroup-v2 memory controller: the whole
+    # dha-tenant memory defense reduces to one root-owned `dha/memory.max=Σ` ceiling, which cannot
+    # exist without it. Inherited UNPINNED from the Alpine linux-virt base; pin =y so an
+    # olddefconfig/base drift to =n fails the build-time CONFIG-assert, not a silent loss of the
+    # backs the per-job work/<id> pids.max; SWAP backs the swapless `memory.swap.max=0` belt — swap
+    # accounting is automatic under MEMCG+SWAP, so the separate memcg-swap controller symbol (removed
+    # ~5.8, commit e55b9f96) is deliberately ABSENT: pinning that phantom would fail this very assert.
+    "CONFIG_CGROUPS=y",
+    "CONFIG_MEMCG=y",
+    "CONFIG_CGROUP_PIDS=y",
+    "CONFIG_SWAP=y",
+    # --- R.4 reproducibility: the kernel-determinism assumption (audit R1 M-1). The repro design
+    #     assumes latent_entropy is the ONLY build randomness AND randstruct is OFF; pin both so a
+    #     base-config drift can't silently drop the hardening (latent_entropy off still builds
+    #     byte-reproducibly — just unhardened, NO signal) or flip on randstruct (its own seed, which
+    #     -frandom-seed does NOT control, breaks repro). RANDSTRUCT_NONE=y alone asserts randstruct
+    #     OFF — a flip to FULL/PERFORMANCE drops the NONE=y line, failing this pin. Both are also in
+    #     kernel-hardening.config (force-set pre-olddefconfig + the fragment<->pins consistency test).
+    "CONFIG_GCC_PLUGIN_LATENT_ENTROPY=y",
+    "CONFIG_RANDSTRUCT_NONE=y",
+    # C3 substrate split: the 4 USB boot-media drivers are per-substrate, NOT in this shared block
+    # (kernel-config-pins-baremetal.toml asserts them =y, kernel-config-pins-vpskvm.toml forbids them +
+    # fail-closes the CONFIG_USB prefix). Deliberately USB-only — the DISK transports (SCSI/ATA/NVMe/
+    # BLK_DEV_SD) are force-set + PINNED in this shared block above (the disk-transports group, audit
+    # L-1) so a base drift can't silently drop one, keeping the box bootable on any KVM hypervisor's
+    # disk. The bake unions the shared block with the firmware-derived substrate block.
+]
+
+# prefix_match: string-valued symbols with per-build content (a key path) — the `.config` must
+# contain a line STARTING with the prefix. CONFIG_SYSTEM_TRUSTED_KEYS embeds the operator's CA cert
+# into `.builtin_trusted_keys` (the CA vouches for the IMA/EVM leaves); a silent drop (bad path syntax,
+# missing trailing quote) leaves the leaves unable to link onto `.ima`/`.evm` → appraisal fails → lockout
+prefix_match = [
+    'CONFIG_SYSTEM_TRUSTED_KEYS="',
+]

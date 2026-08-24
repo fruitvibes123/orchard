@@ -1,0 +1,15 @@
+#!/bin/sh
+# initrd via copy_exec, the initramfs-tools hook API (hook-functions:253 on the pinned image;
+# the class's own hooks/growroot stages its tools the same way). Rendered by orchard; the
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in
+prereqs)
+    echo "$PREREQ"
+    exit 0
+    ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+@COPY_EXEC_LINES@

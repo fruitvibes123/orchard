@@ -1,0 +1,61 @@
+# The box's apk "world" — the TOP-LEVEL intent the operator wants. This is the
+# hand-maintained half; `pinned-apks.toml` is the GENERATED full transitive closure
+# (version + sha256) derived from this by `orchard refresh-apk-lock`, per
+#
+# Analogous to Cargo.toml (intent + release) vs Cargo.lock (resolved closure). Edit this,
+# regenerate the lock, and commit the diff.
+
+# The Alpine release branch the closure resolves within. The dl-cdn URLs use `v3.23`; the
+# branch currently serves the 3.23.x patch level (exact per-package versions live in the lock).
+alpine_version = "3.23"
+
+# --- runtime world: services extracted into the rootfs squashfs -----------------------------
+# Each entry's full runtime-link closure is resolved into pinned-apks.toml's [[package]] rows.
+runtime = [
+    "musl",                # libc
+    "busybox",             # coreutils + /bin/sh (also provides the `ntpd` applet — time sync)
+    "busybox-extras",
+    "dropbear",            # rescue SSH SERVER. dropbear-ssh (the client) is intentionally ABSENT:
+                           #   the box never egresses over SSH (all backup/deploy is operator-pull).
+    "haproxy",             # edge TLS-terminating reverse proxy (→ OpenSSL: libcrypto3/libssl3)
+    "nftables",            # firewall
+    "s6",                  # process supervision (s6-svscan / s6-supervise / s6-svscanctl). Pulls
+                           #   execline + execline-libs via its apk runtime dep (kept-by-dependency);
+                           #   the box's run scripts + oneshots are all #!/bin/sh, so execline is
+    "s6-portable-utils",
+    # The recipes musl binaries' OWN runtime link-deps (readelf-verified union of recipes /
+    # recipes-admin / fb-acme NEEDED — NOT Alpine services). The completeness guard caught
+    # these missing from the service-only closure; everything else our binaries link is pure-Rust
+    # (image codecs, rustls/ring TLS) so the C-lib surface is just these two + musl.
+    "libgcc",              # libgcc_s.so.1 — panic=unwind runtime support
+    "sqlite-libs",         # libsqlite3.so.0 — the app's SQLite data layer (system/unbundled sqlite)
+    "e2fsprogs-extra",     # resize2fs + tune2fs (+ findfs) — the `prepare-persist` box-init oneshot's
+                           #   OFFLINE crash-recovery / first-boot grow / Layer-2 journal-add (persist-
+                           #   crash-recovery). resize2fs + tune2fs live in e2fsprogs-extra (NOT base
+                           #   e2fsprogs); this hard-deps base `e2fsprogs`, which is what pulls in
+                           #   /sbin/e2fsck (the Layer-1 recovery belt) transitively. /sbin/e2fsck is
+                           #   ENFORCED present by the REQUIRED_COMPONENT_PATHS build guard (fail-closed),
+                           #   so a future dep-graph change that dropped it breaks the BUILD, not a box
+]
+
+# --- build/boot inputs: fetched + verified, NEVER extracted into the rootfs -----------------
+# Pinned individually (no closure) in pinned-apks.toml's [[build_input]] rows.
+build_inputs = [
+    "linux-virt",          # source of the kernel BASE_CONFIG (config-virt) ONLY; the box builds
+                           #   its own kernel (MODULES=n) — the prebuilt vmlinuz + 30 MB modules
+    "syslinux",            # extlinux bootloader installer. Under O3 extlinux runs at BUILD time in the
+                           #   container (pinned in the Containerfile), NOT extracted into the initramfs;
+                           #   syslinux stays a build_input as the source of the 440-byte `mbr.bin`
+    # NB: the bake-time mke2fs/extlinux are pinned in crates/image-builder/Containerfile (the build
+    # container), NOT here — apk-world build_inputs are EXTRACTED/fetched artifacts; the bake tools run
+    # inside the container instead, so there is no e2fsprogs build_input.
+]
+
+# DROPPED vs the original hand-curated list:
+#   chrony  — time-sync is busybox `ntpd` + kvm-clock instead (drops the ~12-pkg gnutls/NTS
+#   libressl — dead pin: haproxy links OpenSSL (libcrypto3/libssl3), not libressl.
+#   dropbear-ssh — the SSH client; the box is server-only (see `dropbear` above).
+#   s6-rc, s6-linux-init — dropped by the signed-exec init redesign (2026-05-29): box-init (a custom
+#             Rust PID-1) replaces s6-linux-init, and s6-svscan supervises servicedirs on the signed
+#             rootfs directly (no s6-rc live-copy-to-tmpfs). execline is KEPT (s6's apk runtime dep
+#             pinned-apks.toml after this change. See

@@ -1,0 +1,4 @@
+# Operator artifact-signing ROOT pubkey pin (ed25519). Written by
+# `orchard generate-keys --artifact-signing …`; COMMIT the diff.
+pubkey = "ed25519:f9164ebc18601a15939c29e8292470b2b5468fb03db0af81c889db86d09a8543"
+generated_at = "2026-07-10T17:49:32Z"

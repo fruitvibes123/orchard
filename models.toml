@@ -1,0 +1,82 @@
+#
+# models.toml — the tenants' model-weights pins.
+#
+# Analogous to pins.toml: strict, sha256-pinned build inputs. When `RECIPES_DHA_WEIGHTS_GGUF` names the
+# operator-supplied GGUF, the bake verifies the located file's sha256 against the pin, then wraps it in a
+# squashfs + dm-verity as the .img's 5th GPT partition — written under the CANONICAL in-volume names
+# `model.gguf` (+ `mmproj.gguf` for a VL pair; mount dir /models, so `CREATINE_MODEL_PATH` stays constant
+# across model swaps). Absent the env var, these pins are inert and the build is the non-weights
+#
+# The GGUF bytes are multi-GiB and supplied out-of-band (never committed). `file` is source provenance —
+# WHICH model this is — NOT the in-volume name (see dha S-FB-COMPOSITION). `bytes` lets the build abort
+# fast on a wrong-size file before streaming a hash over GiBs, and gives the gates' payload floor a PINNED
+# comparand instead of a constant hardcoded in a test.
+#
+# ── PER-MANIFEST PROFILES ────────────────────────────────────────────────────────────────────────
+# Profiles are keyed by the tenant manifest's FILE STEM: building `--manifest .../hotswap-tenant.toml`
+# resolves `[profiles.hotswap-tenant]`. FAIL-CLOSED — an unknown stem is a build error, and there is NO
+# default profile, so a bench box can never be built from prod pins or the reverse.
+#
+# WHY profiles exist: the gates need DIFFERENT fixtures and one global pin could not serve both.
+# `boot-gate-hotswap` REQUIRES its small pair (the 1.5b baked + the 0.5b push size the exact-fit partition
+# and the bench VM) — do not re-point it. `boot-gate-dha` likewise stays on a small fixture, for reasons
+# that are mechanical rather than historical (see its section). Only the PROD box carries the production
+#
+# The pin that used to live here was justified as "small enough that the whole-image installer fits in
+# bench-VM RAM". That rationale is RETIRED: it described the pre-streaming installer, which Vec-held the
+# payload big enough that the image CANNOT be buffered whole is now the DESIRED property, the very thing
+# than guest RAM — 1804.4 MiB vs 2048 — so the property is unbufferability, not `image > RAM`; §13.1a.)
+# The prod pin is the DEPLOYMENT TRUTH; gate fixtures are per-profile.
+
+# ── PRODUCTION: the recipes/epa co-tenant box — a 2B VL pair at 2 GiB RAM ────────────────────────────
+# The box's PRODUCTION weights config (operator directive 2026-07-24): a 2B model at 2 GiB. MEASURED on
+# produced bytes, the pair puts the image at 1804.4 MiB against a 2048 MiB guest — just UNDER guest RAM,
+#
+# The TEXT half serves today (qwen3vl is in creatine's codon allowlist). The mmproj is baked for SIZE
+# FIDELITY and forward-readiness — `creatine-serve` has no mmproj load path yet (its `main.rs` reaches
+# `families::load_engine` → `Qwen2Engine::load`, single-GGUF), so the prod manifest deliberately declares
+# no `CREATINE_MMPROJ_PATH`/`CREATINE_TOWER_CACHE`: a baked env that does nothing is indistinguishable at
+# the gate from a working one. When creatine's vision-oracle envelope lands the serve wire, the volume is
+# already correct — that bump changes BINARIES, not these pins.
+[profiles.prod-cotenant.weights]
+file = "qwen3-vl-2b-instruct-q4km.gguf"
+sha256 = "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae"
+bytes = 1107409952
+
+[profiles.prod-cotenant.weights.mmproj]
+file = "mmproj-qwen3-vl-2b-instruct-f16.gguf"
+sha256 = "c3d5afbef5287953acd57b4043d2269456e5761a4eaccb3b71b062996970aea5"
+bytes = 819394848
+
+# ── The dha tenant gate (`boot-gate-dha`) — DELIBERATELY on the BENCH fixture ────────────────────────
+#
+#   1. `boot-gate-dha` is NOT fixture-agnostic where it matters. F2
+#      (`install_dha.rs` `assert_ancestor_sigma_survival`) requires a LIVE creatine — it fails closed on
+#      an empty `dha/creatine/cgroup.procs` and re-asserts the engine is UP after the breach. The claim
+#      that "F4 exercises creatine's permafail" was also false: F4 kills `dha-orchestrator`, not creatine.
+#   2. The dha manifest gives creatine a 128 MiB leaf with `oom_group = true` and no `CREATINE_LOWMEM`.
+#      A 1.03 GiB model under that cap is an untested regime; guessing it survives is not evidence.
+#
+# The dha gate's job is BOX MECHANISM (cgroup Σ ceiling, work/ delegation, s6-permafailon, dm-verity
+# real `orchard prod` ceremony against the real prod image — strictly better evidence than this leg ever
+[profiles.dha-tenant.weights]
+file = "qwen2.5-coder-1.5b-q2_k.gguf"
+sha256 = "3ec56d48cc5acdb93c4323f0d01a3b5db0c73c54fe71831199223720d37f6fcd"
+bytes = 752880192
+
+# ── BENCH: the hotswap-v4 gate fixture — DO NOT RE-POINT ─────────────────────────────────────────────
+# `boot-gate-hotswap` needs THIS pin: qwen2.5-coder-1.5b-q2_k is small enough to leave headroom in the
+# for the prod pair would break the swap gate's geometry. (On disk at creatine/pocs/models/.)
+[profiles.hotswap-tenant.weights]
+file = "qwen2.5-coder-1.5b-q2_k.gguf"
+sha256 = "3ec56d48cc5acdb93c4323f0d01a3b5db0c73c54fe71831199223720d37f6fcd"
+bytes = 752880192
+
+# Hotswap v4: the engine's REAL-inference health probe (`--weights-anchor runtime` bakes it as
+# the profile because the `model` id must equal that tenant manifest's baked CREATINE_MODEL
+# (hotswap-tenant.toml), and the port creatine's tcp loopback bind. One line — the baked grammar is
+# line-oriented.
+[profiles.hotswap-tenant.health]
+port = 8377
+path = "/v1/chat/completions"
+body = '{"model":"hotswap-bench","messages":[{"role":"user","content":"2+2="}],"max_tokens":1}'

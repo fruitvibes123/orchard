@@ -1,0 +1,9 @@
+# rust_bump fixture corpus (throwaway; FRESH per run). Tests bind to these bytes + fprs.
+version = "6.99.1"
+older_version = "6.98.0"
+gen_time = 1781000000
+fixture_now = 1781100000
+
+[keys]
+signer = "D8B061D65D1097147756815B6EA35372367BD711"
+foreign = "306ADA38318AB648B4EF4C33E3653FDBFB5412C7"

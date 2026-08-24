@@ -1,0 +1,127 @@
+# Orchard's consumed-artifact pin manifest. artifact-key -> { sha256, kind }.
+# Every input Orchard bakes is listed here; the bake verifies each file's sha256 against this
+# before use and REFUSES on mismatch/absence. kind = "binary" (fetched, staged) | "source"
+# (vendored, compiled per-bake) | "config" (fetched, rendered-from: the service-manifest TOML).
+# Bump a sha when the owning repo republishes (the pin-bump).
+# INTEGRITY: this manifest is the UN-HASHED ROOT of the verify chain — it is NOT
+# self-verifying by design. Its integrity rests on git review (the pin-bump diff) + the trust
+# model: the operator builds all repos, so sha256 here = build-time integrity, dm-verity/IMA = runtime
+# integrity, the ed25519 .img signature = whole-image authenticity (the documented install-time-TCB
+# ceiling). "verify every input" has its root HERE, in review.
+#
+# Provenance: the shas are copied from the owning repos' committed published-pins.toml —
+#   recipes/published-pins.toml (recipes-app, recipes-admin, service-manifest),
+#   fruit-basket/published-pins.toml (fb-* + box-init/initramfs-init + rambutan/fb-manifest source),
+#   seed-vault/published-pins.toml (grape, dragonfruit source),
+#   creatine/published-pins.toml (creatine-serve), epa/published-pins.toml (epa),
+#   dha/published-pins.toml (dha-orchestrator) — the real dha-box-integration binaries, built via
+#   each repo's own build-musl.sh and published via grocer (sovereignty gates + ELF/linkage-asserted
+#   inline at build; grocer's own fail-closed key+kind cross-check at publish). Regenerate the
+#   artifacts via each repo's `make publish`; re-pin here on a republish.
+schema-version = 1
+
+[artifacts.box-init]
+kind = "binary"
+sha256 = "d501b49a198d924bb7e756fdeb9115330228f442334a93e8e6f02355e7b6a748"
+
+[artifacts.creatine-serve]
+kind = "binary"
+sha256 = "7f69dcb757a8582f816b56be09313716ec826c53b50d64211972d18bbc4720cb"
+
+[artifacts.dha-orchestrator]
+kind = "binary"
+sha256 = "7e09d052ca3f92d27dc0b89ee9a7c031e5b3cfc023fd63ea836d2d0b8a216a75"
+
+# The four dha /opt/dha config artifacts: the
+# three probe scripts + epa.json, published from the dha repo via grocer's config-subset. kind=config —
+# sha256-verified + fetched-and-rendered at bake, NOT vendored. Keys match dha's publish-manifest +
+# [repos.dha].artifacts verbatim (grocer's fail-closed key+kind crosscheck).
+[artifacts.dha-intake-probe]
+kind = "config"
+sha256 = "0a3aea79bd6ee00a8377ed93f6cb25ae74ca32b8244f8f0cbc2d93e18c1d48af"
+
+[artifacts.dha-real-job-probe]
+kind = "config"
+sha256 = "7f8a9cfcf3b4ad252636cdcee7385f14978fbbbb749074535d3e90a06b61f01a"
+
+[artifacts.dha-ac-i-selftest]
+kind = "config"
+sha256 = "b49fe613ef5a93de4e60f0e341b414b56376b4843a200ff0597e1cfe8d3a0fc6"
+
+[artifacts.dha-epa-config]
+kind = "config"
+sha256 = "1c7c05ebdf03e0bdf862f1eb45cb8710641f9f559b544dce50bac2c04445e8a3"
+
+[artifacts.dragonfruit-src]
+kind = "source"
+sha256 = "a619b2c64cfb159371b574e7ee932be3e231a6a3bfe5f423f90fad9a6f006182"
+
+[artifacts.epa]
+kind = "binary"
+sha256 = "ab9e4f812c9c745e172f4ac01638b3919fb1dc5a3b7d1c8f9e117af328eb6437"
+
+[artifacts.fb-acme]
+kind = "binary"
+sha256 = "fe12565b905b8d0d1e6fac0550bf844c0291c9cbc9133ecb8de4c05178b64234"
+
+[artifacts.fb-backup]
+kind = "binary"
+sha256 = "12b7c79b1b43c1f34c309475ecfb68636b63655a1da47146e7ad17ce0bbaf52a"
+
+[artifacts.fb-cert-check]
+kind = "binary"
+sha256 = "57f31d2a8f52a73083d17caf44afd8324857b4ce9de67a8bbb46a951338a638e"
+
+[artifacts.fb-manifest-src]
+kind = "source"
+sha256 = "2a79e8a4e1616f2cdec74ad3ed12f063fa7dc57568e807fe1d9eb49842e87ec6"
+
+# os-update A/B v1 (C-C/C-D): the box-side update engine (`fb-update` — apply/status/reconcile-floors,
+# ssh-exec'd by the `orchard update` ceremony) + the mark-good health-probe longrun (`fb-mark-good`).
+# Dynamic-musl bins from fruit-basket's fb-update STANDALONE workspace (it carries quince→dragonfruit
+# verify-only; the box-never-signs backstop covers it — see fb crates/fb-update/Cargo.toml).
+[artifacts.fb-mark-good]
+kind = "binary"
+sha256 = "2cd534be2685bccc51b990238c628e6423a3c80bc852d43b4e07c7e3e4e89dde"
+
+# Hotswap v4: the fb-weights runtime (setup + swap verbs) — staged anchor-conditionally
+# (RuntimeRecord boxes), published with the fb set.
+[artifacts.fb-weights]
+kind = "binary"
+sha256 = "b0a076c4965e5e0917051bb9bb06c8b45a06a40ff8f8bdca4a8ff8982dd66dad"
+
+[artifacts.fb-oneshots]
+kind = "binary"
+sha256 = "f97bb82021e33e274fdf4a6f0988f842d957b7c533e905a5a043213b12a8d6da"
+
+[artifacts.fb-update]
+kind = "binary"
+sha256 = "b826c06dd10c7d0a5455fce6c9dbb79d3b018484ea211891e8343c252ee79cae"
+
+[artifacts.grape-src]
+kind = "source"
+sha256 = "ea225c080cb5029f115f26495f232e94eca1e0e91dd94da6ff42157feee04dfc"
+
+[artifacts.initramfs-init]
+kind = "binary"
+sha256 = "16c744de2cd68ee80cefa697a7fecbc82d4e89126b585d191a8b32beb2bc50df"
+
+[artifacts.rambutan-src]
+kind = "source"
+sha256 = "1d18efed5e3b3875eeb703fc1a2842b4b19f99df4e79780e3034ce13db446d44"
+
+[artifacts.recipes-admin]
+kind = "binary"
+sha256 = "9edc71c9b0af99303fe44595849a2099a953cd3fcfb9931dfc60bcb308038049"
+
+[artifacts.recipes-app]
+kind = "binary"
+sha256 = "ea1b460b80caac5a30c0c460abdacd148ba2184abec597741f33a3233fe115eb"
+
+[artifacts.service-manifest]
+kind = "config"
+sha256 = "dd6ba99facb596caa3949d77ec59e883657de9d88af25add662b6e32887d8763"
+
+[artifacts.uds-pipe]
+kind = "binary"
+sha256 = "37407e8c3e5ebc1834677c774e122452ed34f46cee44af02e7904c6f86b4d6c5"

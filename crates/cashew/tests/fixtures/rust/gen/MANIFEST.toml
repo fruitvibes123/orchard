@@ -1,0 +1,8 @@
+# Tests bind to these committed bytes + these fingerprints, not to gen.sh determinism.
+gen_time    = 1781000000
+fixture_now = 1781100000
+
+[keys]                       # fingerprints of THIS run's throwaway keys
+rust_key    = "A928EB34C417CEE458A5602AD2DA4393F5E0A6E7"        # [SC] primary, SHA-1 self-cert, signs the genuine manifest sig
+foreign_key = "EE13A419AB431655BDF701744DE293BD47EDC4ED"        # unpinned [SC] key
+rust_appended_subkey_keyid = "BFF862673A2214CF"   # the appended signing subkey (16-hex long keyid)

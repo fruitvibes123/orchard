@@ -1,0 +1,15 @@
+error[E0451]: fields `purpose`, `artifact_hash`, `not_before`, `not_after` and `monotonic_ctr` of struct `WindowUncheckedArtifact` are private
+  --> tests/compile_fail/forge_window_unchecked_artifact.rs:6:9
+   |
+ 5 |     let _ = dragonfruit::WindowUncheckedArtifact {
+   |             ------------------------------------ in this type
+ 6 |         purpose: dragonfruit::Purpose::UpdateImage,
+   |         ^^^^^^^ private field
+ 7 |         artifact_hash: [0u8; 32],
+   |         ^^^^^^^^^^^^^ private field
+ 8 |         not_before: 0,
+   |         ^^^^^^^^^^ private field
+ 9 |         not_after: 0,
+   |         ^^^^^^^^^ private field
+10 |         monotonic_ctr: 0,
+   |         ^^^^^^^^^^^^^ private field

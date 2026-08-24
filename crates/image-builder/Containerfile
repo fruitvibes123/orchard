@@ -1,0 +1,97 @@
+#
+# Carries the toolchain the HostBuildTools shell-outs invoke. Container-side per the build-env rule
+# (musl + kernel builds are NOT host); at run time the repo is bind-mounted READ-ONLY and
+# output goes to a writable mount — never host-`cp` root-owned build artifacts.
+#
+#   squashfs-tools -> mksquashfs (pack_squashfs)     cryptsetup -> veritysetup (build_verity)
+#   ima-evm-utils  -> evmctl (ima_evm_sign_tree)     cpio       -> initramfs (build_initramfs)
+#   e2fsprogs -> mke2fs (bake_boot_fs + bake_persist_skeleton, O3)  syslinux -> extlinux (the boot-fs
+#     stage-2 install). BUILD-TIME ONLY — the O3 box installer execs nothing; these never reach the box
+#     image. mke2fs -d populates the ext4 mount-free (no CAP_SYS_ADMIN). (resize2fs is a BOX-runtime
+#     tool — it grows persist at first boot — so it is pinned in apk-world.toml `runtime`, NOT here.)
+#   mtools -> mformat/mmd/mcopy (bake_esp builds the FAT ESP; deploy sign-sb splices the signed PEs).
+#     Determinism-critical (the FAT bytes must be byte-reproducible via SOURCE_DATE_EPOCH) → an EXPLICIT
+#   rust/cargo (Alpine IS musl, so x86_64-unknown-linux-musl is the default target) -> build_binaries
+#   kernel makedepends (mirror build-kernel.sh) -> build_kernel
+#
+# Reproducibility (defense layer 8 — an independent rebuild to an identical hash makes a
+# build-host compromise detectable). Component C: the FROM base is a PLAIN ALPINE, digest-pinned
+# (immutable), and the Rust toolchain is installed from static.rust-lang.org, PGP-VERIFIED at bump
+# against the Rust release key and sha256-pinned here (the provenance root is now the Rust key + the
+# component shas, NOT Docker Hub's rust image). The top-level apk toolchain is version-pinned below
+# (Alpine v3.23, the base's release). THE REPRODUCIBILITY ANCHOR is the digest of the BUILT image —
+# `deploy build` references the container by @sha256; apk `pkg=ver` does not pin the transitive
+# closure, and Alpine's live mirror drops superseded patch versions (so a from-scratch rebuild is
+# best-effort and may need a loud, intentional version bump). Full closure/archival pinning (à la the
+# box's pinned-apks.toml + sha256) is the sovereignty trajectory. The BLOCKING double-build gate proves
+# the build PROCESS is deterministic given this fixed toolchain.
+#
+# The `FROM` line + the `# >>> sync-pins … >>>` Rust-toolchain block below are GENERATED from
+# pins.toml `[rust]` by `orchard sync-pins` (never hand-edited); the image-builder tests/pins_drift.rs
+# gate + `market verify` §3a-5 fail if they diverge.
+FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+
+# Image-assembly + signing tools (the shell-out targets) + the kernel makedepends baked here
+# (build-kernel.sh's own `apk add` becomes a no-op when already present -> offline + faster).
+# sqlite-dev = the recipes app's system C dep (sqlx `sqlite-unbundled` links system libsqlite3;
+# the `image` crate is pure-Rust in 0.25, ring builds its own crypto via build-base). clang21-dev =
+# libclang for libsqlite3-sys's bindgen (it regenerates bindings for the musl target; `clang-dev` is
+# a virtual alias → pin the concrete clang21-dev). curl = the Rust-toolchain fetch below (a plain
+# Alpine ships none). tar = GNU tar for the same fetch: Alpine's default `/bin/tar` is BusyBox, whose
+# built-in `-J` (xz) auto-decompression forks `xz` and pipes its output back — reproducibly hits
+# "short read"/"corrupted data" unpacking the ~300MB rust-musl tarball below even though the archive
+# is byte-intact (`xz -t` verifies clean; GNU tar on the identical bytes extracts clean). Installing
+# `tar` here makes apk's alternative claim `/bin/tar` before the toolchain RUN block runs.
+# All build-env ONLY — never in the box image.
+# Versions are the v3.23 set installed at the digest-pinned base; a mirror patch superseding any
+# of these makes `docker build` fail loudly (bump intentionally) — the built-image digest is the anchor.
+# UNLIKE the Rust-toolchain block below, this list is hand-maintained prose, NOT `market`-governed:
+# `market upgrade --apks` only regenerates `pinned-apks.toml` (the BOX's runtime closure, via
+# `RefreshApkLock` -> `apk-world.toml`), and `--rust`/`--all` never touch this list either — none of
+# the three re-derive it. A live-mirror patch (e.g. curl 8.19.0-r0 -> 8.20.0-r0) WILL eventually break
+# this RUN step with "unable to select packages: breaks: world[pkg=ver]" — that is expected, diagnosed
+# 2026-07-15 (originally mistaken mid-diagnosis for the RUN-network/tar issue below, which is a SEPARATE,
+# now-fixed bug). Fix: bump the specific package's `=version-r*` here to what `apk policy <pkg>` in a
+# fresh `alpine:3.23` container reports, nothing more — wiring this list into `market`'s pin-sync is
+# The trailing `rm` keeps the LAYER CONTENT deterministic: apk writes /var/log/apk.log with wall-clock
+# timestamps inside the file bytes, which would defeat the §7 double-build reproducibility gate — the
+# exporter's rewrite-timestamp clamps file MTIMES, not file contents (2026-07-23 finding). A build
+# log, not functional state.
+RUN apk add --no-cache \
+        squashfs-tools=4.7.4-r0 cryptsetup=2.8.1-r0 ima-evm-utils=1.6.2-r1 cpio=2.15-r0 \
+        sqlite-dev=3.51.2-r0 clang21-dev=21.1.2-r2 curl=8.20.0-r0 tar=1.35-r4 \
+        build-base=0.5-r3 bison=3.8.2-r2 flex=2.6.4-r7 perl=5.42.2-r0 bash=5.3.3-r1 \
+        openssl=3.5.7-r0 openssl-dev=3.5.7-r0 elfutils-dev=0.194-r0 bc=1.08.2-r0 \
+        diffutils=3.12-r0 linux-headers=6.16.12-r0 gmp-dev=6.3.0-r4 mpc1-dev=1.3.1-r1 \
+        mpfr-dev=4.2.2-r0 zstd=1.5.7-r2 xz=5.8.3-r0 findutils=4.10.0-r0 \
+        e2fsprogs=1.47.3-r0 syslinux=6.04_pre1-r19 mtools=4.0.49-r0 \
+        sbsigntool=0.9.5-r3 efitools=1.9.2-r13 \
+ && rm -f /var/log/apk.log
+
+# The PGP-verified Rust toolchain (Component C §6): the host toolchain (rustc + cargo + musl std) +
+# the UEFI std (rambutan compiles for x86_64-unknown-uefi). Each component is fetched from the
+# manifest-authenticated dated url and `sha256sum -c`'d against its pins.toml pin — the immutability
+# gate (PGP authenticity was established at `market upgrade --rust`; the container has no rust yet, so
+# it cannot re-run cashew). install.sh lives INSIDE the sha-verified tarball, so a sha match means
+# rust-lang's exact installer. (sbsigntool above = the `deploy sign-sb` Authenticode signer;
+# efitools = the §9.2 enrolled-VARS fixture pipeline — both BUILD/CEREMONY-time only.)
+# >>> sync-pins: PGP-verified Rust toolchain (rendered from pins.toml [rust]) — DO NOT EDIT >>>
+RUN curl -fsSL -o rust-musl.tar.xz "https://static.rust-lang.org/dist/2026-05-28/rust-1.96.0-x86_64-unknown-linux-musl.tar.xz" \
+ && echo "8b4db404e24a82be906170b7b64bd69807e72e59d8371bac2a7f0ade75b39697  rust-musl.tar.xz" | sha256sum -c - \
+ && tar xJf rust-musl.tar.xz \
+ && ./rust-1.96.0-x86_64-unknown-linux-musl/install.sh --components=rustc,cargo,rust-std-x86_64-unknown-linux-musl \
+ && curl -fsSL -o rust-std-uefi.tar.xz "https://static.rust-lang.org/dist/2026-05-28/rust-std-1.96.0-x86_64-unknown-uefi.tar.xz" \
+ && echo "dd8d565f061389cef66f64aa65bbfabe01954e360ada0b39f1e0d637d588e4f6  rust-std-uefi.tar.xz" | sha256sum -c - \
+ && tar xJf rust-std-uefi.tar.xz \
+ && ./rust-std-1.96.0-x86_64-unknown-uefi/install.sh \
+ && rm -rf rust-musl.tar.xz rust-std-uefi.tar.xz rust-1.96.0-x86_64-unknown-linux-musl rust-std-1.96.0-x86_64-unknown-uefi
+# <<< sync-pins: Rust toolchain <<<
+
+# Build-time gate: every shell-out target must resolve, or the IMAGE build fails (not the
+# first `deploy build`). Fail-closed at the earliest point. The uefi std is a rustc target-list entry
+# (there is no rustup in this self-assembled toolchain).
+RUN command -v mksquashfs && command -v veritysetup && command -v evmctl \
+        && command -v cpio && command -v cargo && command -v make \
+        && command -v mke2fs && command -v extlinux \
+        && command -v mformat && command -v mcopy \
+        && rustc --print target-list | grep -qx x86_64-unknown-uefi

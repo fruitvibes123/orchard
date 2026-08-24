@@ -1,0 +1,21 @@
+error[E0277]: the trait bound `VerifiedArtifact: From<WindowUncheckedArtifact>` is not satisfied
+  --> tests/compile_fail/no_into_or_as_verified.rs:13:50
+   |
+13 |     let _: dragonfruit::VerifiedArtifact = wua().into();
+   |                                                  ^^^^ the trait `From<WindowUncheckedArtifact>` is not implemented for `VerifiedArtifact`
+   |
+   = note: required for `WindowUncheckedArtifact` to implement `Into<VerifiedArtifact>`
+
+error[E0277]: the trait bound `WindowUncheckedArtifact: From<VerifiedArtifact>` is not satisfied
+  --> tests/compile_fail/no_into_or_as_verified.rs:14:56
+   |
+14 |     let _: dragonfruit::WindowUncheckedArtifact = va().into();
+   |                                                        ^^^^ the trait `From<VerifiedArtifact>` is not implemented for `WindowUncheckedArtifact`
+   |
+   = note: required for `VerifiedArtifact` to implement `Into<WindowUncheckedArtifact>`
+
+error[E0599]: no method named `as_verified` found for struct `WindowUncheckedArtifact` in the current scope
+  --> tests/compile_fail/no_into_or_as_verified.rs:15:19
+   |
+15 |     let _ = wua().as_verified();
+   |                   ^^^^^^^^^^^ method not found in `WindowUncheckedArtifact`

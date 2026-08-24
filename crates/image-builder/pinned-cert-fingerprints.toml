@@ -1,0 +1,13 @@
+# Operator signing-cert fingerprints (sha256 of the cert DER).
+# Written by `orchard {generate-keys,update-cert-fingerprints}`; commit to the repo.
+[image_signing]
+fingerprint = "sha256:aa5419ca8d9da1e09e12a9582ee7e466f3b4d7240c38a5b8e45647e1da166777"
+generated_at = "2026-06-04T07:13:55Z"
+
+[signing_ca]
+fingerprint = "sha256:c98f81223d92c0748c5922680d9714a3a90d3e7ebeaf13bc799a6df2ef8e3ddb"
+generated_at = "2026-06-04T07:13:55Z"
+
+[ima]
+fingerprint = "sha256:b068a8eb2f235f2ef8b721c64511511ae7897abfcba238adf1a4a1002fe951d3"
+generated_at = "2026-06-04T07:13:55Z"

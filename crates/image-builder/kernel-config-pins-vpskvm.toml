@@ -1,0 +1,31 @@
+# C3 substrate block — vps-kvm. UNIONED with the shared kernel-config-pins.toml at bake time (firmware
+# Seabios/SeabiosGpt ⇒ this block). Sheds the USB host/storage stack: a KVM/hypervisor VPS boots off its
+# virtual disk, never off USB media, so kernel-hardening-vpskvm.config force-DISABLES CONFIG_USB and
+# these VERIFY it stayed off. DELIBERATELY USB-only — the disk transports (virtio-blk/scsi, SCSI, ATA,
+# NVMe, BLK_DEV_SD) STAY (force-set + pinned in the shared block, audit L-1) so the box boots on any KVM
+# hypervisor's disk (shedding them would lock fruit-basket to virtio-blk hosts). Omission-tolerant:
+# `# CONFIG_X is not set` satisfies `forbidden`.
+exact_match = []
+prefix_match = []
+# The specific USB boot-media drivers the fragment disables (documented + explicitly asserted-off).
+forbidden = [
+    "CONFIG_USB=y",
+    "CONFIG_USB_XHCI_HCD=y",
+    "CONFIG_USB_EHCI_HCD=y",
+    "CONFIG_USB_STORAGE=y",
+]
+# FAIL-CLOSED domain guard: reject EVERY `CONFIG_USB*=y` driver, not just the four above — so a kernel
+# bump that adds a new USB host controller is caught by the build, not only the produced-bytes gate.
+forbidden_prefix = ["CONFIG_USB"]
+# The 3 allowlisted flags are NOT drivers — they are gates/markers with no attack surface of their own:
+# USB_SUPPORT is the menuconfig gate for the (force-disabled) USB stack, USB_ARCH_HAS_HCD a `def_bool y`
+# capability marker, USB_OHCI_LITTLE_ENDIAN a bare endianness bool the (disabled) OHCI driver consumes.
+# The config-assert gate PASSES with exactly these 3 CONFIG_USB* symbols surviving (USB host/storage all
+# off). Allowlisted so the domain guard fails closed on real DRIVERS only. NB: CONFIG_USB_PCI / USB_PCI_AMD
+# are NOT here — they compile live pci-quirks.o (a boot-time PCI fixup), so the fragment force-DISABLES
+# them and the prefix guard then FORBIDS them (audit F-1).
+forbidden_prefix_allow = [
+    "CONFIG_USB_SUPPORT",
+    "CONFIG_USB_ARCH_HAS_HCD",
+    "CONFIG_USB_OHCI_LITTLE_ENDIAN",
+]

@@ -1,0 +1,12 @@
+[pkg.rust]
+version = "6.99.1 (deadbeef1 2026-06-09)"
+
+[pkg.rust.target.x86_64-unknown-linux-musl]
+available = true
+xz_url = "https://static.rust-lang.org/dist/2026-06-09/rust-6.99.1-x86_64-unknown-linux-musl.tar.xz"
+xz_hash = "1111111111111111111111111111111111111111111111111111111111111111"
+
+[pkg.rust-std.target.x86_64-unknown-uefi]
+available = true
+xz_url = "https://static.rust-lang.org/dist/2026-06-09/rust-std-6.99.1-x86_64-unknown-uefi.tar.xz"
+xz_hash = "2222222222222222222222222222222222222222222222222222222222222222"

@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "crates/image-builder",
+    "crates/syslinux-install",
+    "crates/orchard",
+    "crates/grocer",
+    "crates/cashew",
+]
+# The vendored pinned SOURCE drops are consumed as compiled source — grape + fb-manifest by
+# image-builder and dragonfruit[sign] by the orchard CLI (Cargo PATH DEPS), and rambutan per-bake by
+# build_efi_loader (`cd vendor/rambutan && cargo build`, its OWN [workspace]). Cargo otherwise
+# auto-includes in-tree path deps as workspace members, which makes `cargo test --workspace` /
+# `clippy --all-targets` / `fmt --all` descend into their OWN internal suites — incl. dragonfruit's
+# crypto-sentry, which walks to Seed-Vault sibling workspaces (dragonfruit-nostd-gate) absent in the
+# vendored layout (→ a spurious FAIL). Excluding them keeps grape/fb-manifest/dragonfruit compiling as
+# path deps, so they STAY in the workspace Cargo.lock and Orchard's sentry
+# (crates/image-builder/tests/no_forbidden_crypto_deps.rs) covers their transitive crypto surface via
+# that lock; rambutan is out-of-workspace (0 root-lock entries), so the sentry scans its own
+# vendor/rambutan/Cargo.lock explicitly. Pinned upstream source stays out of --workspace
+# selection (not Orchard's to test/lint/fmt). vendor/ integrity vs consume-pins.toml is the
+# `vendor_integrity` test (re-tar + sha-assert, in `make verify`). A NEW vendored drop must be added here.
+exclude = [
+    "vendor/dragonfruit",
+    "vendor/grape",
+    "vendor/fb-manifest",
+    "vendor/rambutan",
+]
+resolver = "2"

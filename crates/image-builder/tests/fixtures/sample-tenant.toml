@@ -1,0 +1,84 @@
+# holds NO recipes manifest: the reference tenant is fetched + sha256-verified from the pinned store at
+# bake (config::parse_validated_manifest). The fail-closed §5.3 validator battery + the render goldens
+# need a COMPLETE, valid tenant to mutate/render; this is it — a fictional "blogd" app, structurally
+# exhaustive (every validator class + every render golden has an anchor here) but NEVER booted (the
+# bootable generalization proof is the toy + the boot-gate). A STATIC fixture so the security battery
+# ALWAYS runs offline (no store dependency, no skip-if-absent coverage gap). app uid 100 is disjoint
+# from the OS-fixed set (fb-acme 101 / fb-backup 102 / fb-cert-check 103 / haproxy 104 / dropbear 105).
+schema_version = 1
+
+# --- the tenant identity baked into /etc/passwd+group ---
+[[identities]]
+name = "blogd"
+uid = 100
+
+# --- the app env contract (the s6 envdir; PUBLIC_URL templates the box domain) ---
+[env]
+envdir = "/etc/blogd/env"
+[env.vars]
+STATE_DIR = [ { text = { value = "/persist/blogd" } } ]
+LISTEN_ADDR = [ { text = { value = "127.0.0.1" } } ]
+PUBLIC_URL = [ { text = { value = "https://" } }, { placeholder = { name = "domain" } } ]
+
+# --- the tenant longruns (ntpd/dropbear/haproxy/rescue-dropbear stay OS-invariant templates) ---
+[[services]]
+name = "blogd"
+shape = { exec = { binary = "/usr/bin/blogd", argv = [], priv = { setuidgid = { user = "blogd", envdir = "/etc/blogd/env" } } } }
+
+[[services]]
+name = "blogd-worker"
+shape = { exec = { binary = "/usr/bin/blogd", argv = [ { literal = { value = "worker" } }, { literal = { value = "--since" } }, { placeholder = { name = "source_date_epoch" } } ], priv = { setuidgid = { user = "blogd", envdir = "/etc/blogd/env" } } } }
+
+[[services]]
+name = "fb-backup"
+shape = { periodic_loop = { binary = "/usr/bin/fb-backup", argv = [ { literal = { value = "/persist/blogd" } } ], interval_secs = 86400, priv = { root = {} } } }
+
+# --- the app-domain boot-hooks (box-init runs these pre-supervision; OS-infra hooks stay box-init-owned) ---
+[[boot_hooks]]
+name = "set-hostname"
+binary = "/usr/bin/fb-oneshots"
+argv = [ { literal = { value = "set-hostname" } }, { literal = { value = "--fallback" } }, { placeholder = { name = "domain" } } ]
+priv = { root = {} }
+order = 10
+timeout_secs = 30
+on_failure = { rescue = {} }
+
+[[boot_hooks]]
+name = "blogd-init"
+binary = "/usr/bin/blogd"
+argv = [ { literal = { value = "init" } } ]
+priv = { setuidgid = { user = "blogd", envdir = "/etc/blogd/env" } }
+order = 20
+timeout_secs = 60
+on_failure = { rescue = {} }
+
+# --- the edge/haproxy route-set (the grammar + strip-then-set + stick-table stay OS-invariant) ---
+[edge]
+backend = "127.0.0.1:8000"
+ca_file = "/persist/blogd/ca.crt"
+redacted_paths = [ "/admin/" ]
+redacted_query_params = [ "token" ]
+mtls_paths = [ "/api/v1/", "/upload/" ]
+throttle_rules = [
+    { paths = [ "/login" ], match = "exact", max_req_rate = 10 },
+]
+
+# --- the persist dirs (created at boot by box-init setup-dirs) ---
+[[persist]]
+path = "blogd"
+uid = 100
+mode = 0o700
+
+# --- the backup policy (dirs/files tarred + the sqlite db VACUUMed; ca.crt MUST be in the set) ---
+[backup]
+sources = [ "posts", "media", "secrets", "ca.crt" ]
+vacuum_target = "blogd.db"
+
+# --- the health probe ---
+[probe]
+port = 443
+path = "/"
+
+# --- the nftables ingress ports ---
+[nftables]
+tcp_ports = [ 22, 80, 443 ]

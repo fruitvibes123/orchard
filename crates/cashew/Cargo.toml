@@ -1,0 +1,23 @@
+[package]
+name = "cashew"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "Verify-only OpenPGP/RSA detached-signature checker: a whitelist RFC-4880 format layer over in-tree audited crypto (rsa/sha2/sha1). Zero net-new crates. Verifies kernel.org tarball signatures for the market --kernel pin bump."
+
+[lib]
+name = "cashew"
+path = "src/lib.rs"
+
+[dependencies]
+# crates). Do not float these; a `^` that resolved a new minor would pull a fresh closure.
+#
+# `rsa` carries RUSTSEC-2023-0071 (the "Marvin" timing side channel) — it is INERT here by
+# (decryption / signing), and cashew is VERIFY-ONLY — it holds no private key and every verify input
+# (modulus, exponent, signature, digest) is public, so there is no secret whose timing could leak.
+# Do NOT `cargo audit --ignore` this blindly and do NOT downgrade `rsa` to silence it without
+# re-confirming cashew stays verify-only; the advisory clears itself if/when `rsa` ships a fixed 0.9.x.
+rsa = "=0.9.10"
+sha2 = { version = "=0.10.9", features = ["oid"] }
+sha1 = "=0.10.6"
+base64 = "=0.22.1"

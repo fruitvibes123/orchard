@@ -1,0 +1,19 @@
+# Keys are random; tests bind to these committed bytes, not to gen.sh determinism.
+# All key + sig creation times are stamped at gen_time (--faked-system-time); tests evaluate
+# the generated corpus at fixture_now (> gen_time, so nothing is future-dated; key_d's subkey
+# is expired by then). The REAL fixtures under real/ share the same fixture_now (METADATA.toml).
+gen_time    = 1781000000
+fixture_now = 1781100000
+leading_zero_mpi_tries      = 98
+leading_zero_time_offset_s  = 98   # winning sig created at gen_time + this
+expiring_sig_lifetime_s     = 3600   # sig_a_1b_sha256_expiring: expired at fixture_now
+
+[keys]              # fingerprints of THIS run's throwaway keys
+key_a = "1B43D45CCAE064AC520FA800794E4A7DE1B4999D"      # primary-signs [SC], no signing subkey
+key_b = "8BB8D8DE92049FFAE20EB52420DA0B051D232422"      # primary + signing subkey
+key_c = "7EE086D3B87EDD7508FC37622A27F06B1A1E925B"      # foreign / unpinned [SC]
+key_d = "1A329F3FAF35EA44E326DD03BB2007380687F8D2"      # short-expiry signing subkey (expired at any real now)
+key_e = "1EF18D38454DC6F31ED10AFAAEC1ABDA49BA847A"      # revoked signing subkey
+key_f = "73CC643DBA6D56EF4910ECA8DC01D4D6E09C4C59"      # revoked PRIMARY (0x20 in the direct position)
+key_g = "0006B682D8FA6CAF6ADA7B57ACAD55581BDB6D13"      # only UID cert revoked (0x30, same faked second as the 0x13)
+key_e_revoked_subkey = "E96869BFC812336F"

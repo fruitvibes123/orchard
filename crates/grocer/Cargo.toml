@@ -1,0 +1,25 @@
+[package]
+name = "grocer"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "The narrow pin-store publisher: writes pre-built artifacts into the sha256 artifact-store + published-pins, ONLY to the explicit paths it is handed (atomicity by construction). Replaces the per-repo publish.sh shell glue."
+
+[[bin]]
+name = "grocer"
+path = "src/main.rs"
+
+[lib]
+name = "grocer"
+path = "src/lib.rs"
+
+[dependencies]
+recipes-image-builder = { path = "../image-builder" }
+clap = { version = "4", features = ["derive"] }
+elf = "0.8"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3"
+thiserror = "1"

@@ -1,0 +1,269 @@
+#!/bin/sh
+# orchard-reclaim — the reclaim-tail one-shot, rendered by orchard and staged into the TARGET's
+# own Debian initramfs at scripts/local-premount. Runs after the root device is set up and before
+# checkfs/mount. Every SKIP leaves the partition table exactly as found and exits 0; the host-side
+# re-run then refuses. Values below are threaded by the host plan; block_size is deliberately NOT
+# threaded — it is re-read here.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in
+prereqs)
+    echo "$PREREQ"
+    exit 0
+    ;;
+esac
+
+DISK=@DISK@
+PART_NUM=@PART_NUM@
+PART_NODE=@PART_NODE@
+PART_SYSFS=@PART_SYSFS@
+PART_START=@PART_START@
+PART_END_ORIGINAL=@PART_END_ORIGINAL@
+PLANNED_END=@PLANNED_END@
+TARGET_BLOCKS=@TARGET_BLOCKS@
+
+# Strip leading blanks from $1 into the variable named by $2 — builtins only.
+# MEASURED (first gate runs): anchored grep-based reads came back EMPTY on the class fixture with
+# the filesystem perfectly healthy — the class fixture's initramfs
+# is klibc-only (initramfs-tools-core hard-depends klibc-utils; busybox is only a Recommends), so
+# the text-processing utilities are not guaranteed present at all. CONCLUSION: parse with shell
+# builtins only; nothing below shells out beyond the allowlisted set.
+lstrip() {
+    _v=$1
+    while :; do
+        case "$_v" in
+        ' '* | '	'*) _v=${_v#?} ;;
+        *) break ;;
+        esac
+    done
+    LSTRIP_OUT=$_v
+}
+
+# ONE dumpe2fs -h read supplies both factors (unsplittable product); anchored
+# match; exactly one line per field; numeric; anything else leaves FS_OK=0 and names why in
+# FS_WHY (a SKIP the operator cannot diagnose is not a diagnosable failure).
+read_fs() {
+    FS_OK=0
+    FS_WHY=
+    BLOCK_COUNT=
+    BLOCK_SIZE=
+    bc_n=0
+    bs_n=0
+    if ! command -v dumpe2fs > /dev/null 2>&1; then
+        FS_WHY="dumpe2fs-absent"
+        return 0
+    fi
+    DUMP="$(dumpe2fs -h "$PART_NODE" 2>/dev/null)"
+    dump_rc=$?
+    # SKIP on a non-zero dumpe2fs exit too, not only empty output. `$?` here is the command
+    # substitution's status (dumpe2fs's own exit), read before any command clobbers it; the
+    # host-side twin (eligibility.rs) refuses on the same rc.
+    if [ "$dump_rc" != 0 ]; then
+        FS_WHY="dumpe2fs-rc=$dump_rc"
+        return 0
+    fi
+    if [ -z "$DUMP" ]; then
+        FS_WHY="dumpe2fs-empty-output"
+        return 0
+    fi
+    # Split on newlines with globbing OFF: the output carries `*` in places, and pathname
+    # expansion here would silently rewrite the very fields being parsed.
+    _oldifs=$IFS
+    set -f
+    IFS='
+'
+    for _line in $DUMP; do
+        case "$_line" in
+        'Block count:'*)
+            bc_n=$((bc_n + 1))
+            lstrip "${_line#Block count:}"
+            BLOCK_COUNT=$LSTRIP_OUT
+            ;;
+        'Block size:'*)
+            bs_n=$((bs_n + 1))
+            lstrip "${_line#Block size:}"
+            BLOCK_SIZE=$LSTRIP_OUT
+            ;;
+        esac
+    done
+    IFS=$_oldifs
+    set +f
+    if [ "$bc_n" != 1 ]; then
+        FS_WHY="block-count-lines=$bc_n"
+        return 0
+    fi
+    if [ "$bs_n" != 1 ]; then
+        FS_WHY="block-size-lines=$bs_n"
+        return 0
+    fi
+    case "$BLOCK_COUNT" in '' | *[!0-9]*)
+        FS_WHY="block-count-nonnumeric"
+        return 0
+        ;;
+    esac
+    case "$BLOCK_SIZE" in '' | *[!0-9]*)
+        FS_WHY="block-size-nonnumeric"
+        return 0
+        ;;
+    esac
+    FS_BYTES=$((BLOCK_COUNT * BLOCK_SIZE))
+    FS_OK=1
+}
+
+# step 1 — arithmetic-width self-test: decimal-string compare, never test -eq. Every later
+# numeric comparison rides the same $(( )) engine this verifies, rendered to 1/0 and
+# string-compared, so a narrow test(1) cannot lie about a wide value.
+if [ "$((@ARITH_A@ * @ARITH_B@))" != "@ARITH_PRODUCT@" ]; then
+    echo "<3>orchard-reclaim: step1 SKIP arithmetic self-test failed" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step1 arithmetic self-test ok" > /dev/kmsg
+
+# step 2 — idempotence guard: BOTH conjuncts required. A bad read does NOT short-circuit;
+# it continues to step 3 where the bounds checks govern.
+PLANNED_SIZE=$((PLANNED_END - PART_START))
+GUARD_OK=0
+read_fs
+if [ "$FS_OK" = 1 ]; then
+    start_s="$(cat "/sys/class/block/$PART_SYSFS/start" 2>/dev/null)"
+    size_s="$(cat "/sys/class/block/$PART_SYSFS/size" 2>/dev/null)"
+    case "$start_s" in '' | *[!0-9]*) start_s= ;; esac
+    case "$size_s" in '' | *[!0-9]*) size_s= ;; esac
+    if [ -n "$start_s" ] && [ -n "$size_s" ]; then
+        # sysfs sectors -> bytes at the point of read.
+        PART_END=$(((start_s + size_s) * 512))
+        GUARD_OK=1
+    fi
+fi
+if [ "$GUARD_OK" = 1 ] && [ "$((FS_BYTES <= PLANNED_SIZE))" = 1 ] && [ "$((PART_END <= PLANNED_END))" = 1 ]; then
+    echo "<3>orchard-reclaim: step2 short-circuit fs=$FS_BYTES planned_size=$PLANNED_SIZE part_end=$PART_END planned_end=$PLANNED_END" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step2 no short-circuit, proceeding (read: ${FS_WHY:-ok})" > /dev/kmsg
+
+# step 3 — e2fsck -fp: proceed iff (rc & 0xFC) == 0 (§6.3; -p never -y; -f required). An error
+# bit ends this boot's attempt; checkfs then force-checks and panics (row R-FSCK-PANIC).
+e2fsck -fp "$PART_NODE" >/dev/null 2>&1
+rc=$?
+if [ "$((rc & 252))" != 0 ]; then
+    echo "<3>orchard-reclaim: step3 e2fsck rc=$rc error bit set, ending this attempt (R-FSCK-PANIC ahead)" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step3 e2fsck rc=$rc ok" > /dev/kmsg
+
+# step 4 — grow check, then resize2fs. rc 0 is the ONLY success (inverted from step 3 by
+# design: resize2fs rc 1 is a refusal). The grow check is the fail-closed backstop; the
+# host already refused this earlier.
+read_fs
+if [ "$FS_OK" != 1 ]; then
+    echo "<3>orchard-reclaim: step4 SKIP filesystem read failed: $FS_WHY" > /dev/kmsg
+    exit 0
+fi
+if [ "$((TARGET_BLOCKS * BLOCK_SIZE > FS_BYTES))" = 1 ]; then
+    echo "<3>orchard-reclaim: step4 SKIP would grow: target_blocks=$TARGET_BLOCKS block_size=$BLOCK_SIZE fs_bytes=$FS_BYTES" > /dev/kmsg
+    exit 0
+fi
+resize2fs "$PART_NODE" "$TARGET_BLOCKS" >/dev/null 2>&1
+rc=$?
+if [ "$rc" != 0 ]; then
+    echo "<3>orchard-reclaim: step4 SKIP resize2fs rc=$rc, only rc 0 is success (§6.4)" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step4 resize2fs to $TARGET_BLOCKS blocks ok" > /dev/kmsg
+
+read_fs
+if [ "$FS_OK" != 1 ]; then
+    echo "<3>orchard-reclaim: step5 SKIP readback failed: $FS_WHY" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step5 readback fs_bytes=$FS_BYTES" > /dev/kmsg
+
+if [ "$((FS_BYTES >= PLANNED_SIZE / 2))" != 1 ]; then
+    echo "<3>orchard-reclaim: step6 SKIP readback $FS_BYTES below half planned size $PLANNED_SIZE" > /dev/kmsg
+    exit 0
+fi
+FINAL_END=$PLANNED_END
+CAND=$((PART_START + FS_BYTES))
+if [ "$((CAND > FINAL_END))" = 1 ]; then FINAL_END=$CAND; fi
+if [ "$((PART_START < FINAL_END))" != 1 ] || [ "$((FINAL_END <= PART_END_ORIGINAL))" != 1 ]; then
+    echo "<3>orchard-reclaim: step6 SKIP final end $FINAL_END out of bounds" > /dev/kmsg
+    exit 0
+fi
+SECTORS=$(((FINAL_END - PART_START) / 512))
+if [ "$((SECTORS > 0))" != 1 ]; then
+    echo "<3>orchard-reclaim: step6 SKIP sector count not strictly positive" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step6 final_end=$FINAL_END sectors=$SECTORS" > /dev/kmsg
+
+tries=0
+wrote=0
+while [ "$tries" -lt 5 ]; do
+    if printf 'size=%s\n' "$SECTORS" | sfdisk --lock=nonblock -N "$PART_NUM" "/dev/$DISK" >/dev/null 2>&1; then
+        wrote=1
+        break
+    fi
+    tries=$((tries + 1))
+    sleep 1
+done
+if [ "$wrote" != 1 ]; then
+    echo "<3>orchard-reclaim: step7 SKIP sfdisk did not succeed within $tries tries" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step7 sfdisk wrote size=$SECTORS" > /dev/kmsg
+
+# step 8 — assert the write landed: sfdisk exits 0 on a silent no-op, so re-read the on-disk
+# table and compare (§6.8; a mismatch, including UNCHANGED, is row R-NOOP-WRITE at R8).
+DUMPTXT="$(sfdisk --dump "/dev/$DISK" 2>/dev/null)"
+dump_size=
+dump_n=0
+_oldifs=$IFS
+set -f
+IFS='
+'
+for _line in $DUMPTXT; do
+    case "$_line" in
+    "$PART_NODE :"*)
+        dump_n=$((dump_n + 1))
+        case "$_line" in
+        *size=*)
+            lstrip "${_line#*size=}"
+            dump_size=${LSTRIP_OUT%%,*}
+            ;;
+        *) dump_size= ;;
+        esac
+        ;;
+    esac
+done
+IFS=$_oldifs
+set +f
+if [ "$dump_n" != 1 ] || [ "$dump_size" != "$SECTORS" ]; then
+    echo "<3>orchard-reclaim: step8 write did not land: entry lines=$dump_n dump size=$dump_size want=$SECTORS (R-NOOP-WRITE)" > /dev/kmsg
+    exit 0
+fi
+echo "<3>orchard-reclaim: step8 on-disk table confirms size=$dump_size" > /dev/kmsg
+
+i=0
+while [ "$i" -lt 10 ]; do
+    [ -b "$PART_NODE" ] && break
+    sleep 1
+    i=$((i + 1))
+done
+if [ -b "$PART_NODE" ]; then
+    echo "<3>orchard-reclaim: step9 device node present" > /dev/kmsg
+else
+    echo "<3>orchard-reclaim: step9 device node ABSENT after bounded wait (R-NODE-ABSENT ahead)" > /dev/kmsg
+fi
+k_start="$(cat "/sys/class/block/$PART_SYSFS/start" 2>/dev/null)"
+k_size="$(cat "/sys/class/block/$PART_SYSFS/size" 2>/dev/null)"
+case "$k_start" in '' | *[!0-9]*) k_start= ;; esac
+case "$k_size" in '' | *[!0-9]*) k_size= ;; esac
+if [ -n "$k_start" ] && [ -n "$k_size" ] && [ "$(((k_start + k_size) * 512 == FINAL_END))" = 1 ]; then
+    echo "<3>orchard-reclaim: step9 kernel view matches on-disk end $FINAL_END" > /dev/kmsg
+else
+    echo "<3>orchard-reclaim: step9 kernel view STALE, a second reboot re-reads the table (R-STALE-KERNEL)" > /dev/kmsg
+fi
+
+# step 10 — final extents; the boot continues into checkfs/mount.
+echo "<3>orchard-reclaim: step10 done part=[$PART_START,$FINAL_END) sectors=$SECTORS" > /dev/kmsg
+exit 0

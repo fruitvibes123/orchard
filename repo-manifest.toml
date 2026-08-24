@@ -1,0 +1,84 @@
+# The configured owning-repo manifest for `market` (the pin-store tool). Maps each consume-pins
+# artifact to the repo that publishes it, plus that repo's path RELATIVE TO THE ORCHARD REPO ROOT
+# (the cwd `orchard market` runs from). Replaces the hardcoded OWNERS const in
+# tests/pins_provenance.rs and fixes the recipes-path: the recipes repo lives OUTSIDE
+# fruit-ecosystem (`../../recipes`), NOT at fruit-ecosystem/recipes.
+#
+# `market verify` asserts this artifact set EXACTLY equals consume-pins.toml's (fail-closed on
+# omission OR extra), so a manifest that forgets a repo cannot silently skip its artifacts.
+schema-version = 1
+
+# The cert-presence trail root, relative to this orchard repo root. The trail lives
+# in the COOKBOOK launchpad (a sibling repo), NOT orchard — the cert trail and the pin store were split
+# apart post-monorepo — so this is a configured cross-repo path, declared data rather than a hardcoded
+# constant. `market verify` scans it for bare-quoted live pins (a cert must mark `certifies-pin:` /
+# `superseded-by:`, or a build record takes market-cert-allowlist.toml).
+cert-trail = "../../cookbook/trail"
+
+[repos.seed-vault]
+path = "../seed-vault"
+artifacts = ["grape-src", "dragonfruit-src"]
+
+# fruit-basket artifacts publish from + verify against the canonical fruit-basket main. The os-update
+# A/B v1 land (2026-07-15) merged the branch to main and republished the changed set from the landed
+# merged main (box-init w/ the seed-update-floors oneshot + fb-manifest-src w/ the fb-update allowlist);
+# fb-update/fb-mark-good are pinned on main.
+[repos.fruit-basket]
+path = "../fruit-basket"
+artifacts = [
+    "fb-acme",
+    "fb-oneshots",
+    "fb-backup",
+    "fb-cert-check",
+    "fb-update",
+    "fb-mark-good",
+    "fb-weights",
+    "box-init",
+    "initramfs-init",
+    "rambutan-src",
+    "fb-manifest-src",
+]
+
+[repos.recipes]
+path = "../../recipes"
+artifacts = ["recipes-app", "recipes-admin", "service-manifest"]
+
+# creatine/epa/dha (2026-07-08 dha-box-integration): the three real dha-box binaries, published via
+# grocer from each repo's own build-musl.sh. A NEW kind of repo-manifest entry — pure binary-artifact
+# providers, not full OS-image build repos like fruit-basket/recipes above. `market verify`'s §3a-2
+# SeedsAgree check (crates/image-builder/src/seed_agree.rs) has no notion of that distinction: it
+# hard-requires EVERY repo in this manifest to carry a byte-identical copy of seed-vault's pins.toml
+# (the shared kernel/syslinux/rust-toolchain pin file), with no escape besides `--allow-missing`
+# (documented as a partial-checkout dev-loop crutch, not a permanent per-repo exemption). Since none of
+# these three repos' own builds read pins.toml at all (each pins its OWN build container image
+# independently in build-musl.sh — currently the same rust/alpine version by coincidence, not by any
+# enforced link to this file), a byte-identical copy was added to each anyway (creatine/epa/dha) purely
+# to satisfy SeedsAgree, not because it's consumed.
+#
+# FORWARD DEBT: this is a stopgap, not the right shape long-term. The real fix is a market-tool
+# enhancement — e.g. a repo-manifest flag (`seeded = false`?) that lets SeedsAgree skip an
+# artifact-only repo by declared policy instead of by an unrelated dev-loop flag, and/or by an
+# always-agreeing empty-file convention — not built here; owed against orchard-market2's
+# crates/image-builder/src/seed_agree.rs + crates/orchard/src/deploy/market.rs. Until then: keep each
+# of creatine/epa/dha's pins.toml byte-identical to seed-vault's canonical on every seed-vault bump
+# (the existing "sync the copy + run `make pins`" discipline the Divergence error message already
+# names — these three just have no build-side consumer to notice a drift, so nothing forces the sync
+# except this check itself).
+[repos.creatine]
+path = "../../creatine"
+artifacts = ["creatine-serve"]
+
+[repos.epa]
+path = "../../epa"
+artifacts = ["epa"]
+
+[repos.dha]
+path = "../../dha"
+artifacts = [
+    "dha-orchestrator",
+    "uds-pipe",
+    "dha-intake-probe",
+    "dha-real-job-probe",
+    "dha-ac-i-selftest",
+    "dha-epa-config",
+]
