@@ -1,5 +1,5 @@
 //! Core-dump suppression for seed-handling processes (docker-artifact-signer
-                                               
+                                                
 //!
 //! A non-dumpable process is dumped by NEITHER the file nor the pipe
 //! `core_pattern` path — kernel `fs/coredump.c` gates on dumpability BEFORE
@@ -9,9 +9,9 @@
 //! control; `--ulimit core=0` (RLIMIT_CORE) is belt-and-suspenders ONLY — a
 //! piping `core_pattern` (systemd-coredump / apport / abrt) makes the kernel
 //! ignore RLIMIT_CORE and the handler decide (man core(5)), which is exactly
-                              
+                               
 //!
-                                                                            
+                                                                             
 //! orchard's OWN `main()` — post-exec, unconditional, before subcommand
 //! dispatch. A docker `--entrypoint` wrapper cannot do this job: the normal
 //! execve from the wrapper (or from `cargo run`) into `orchard` resets the
@@ -52,6 +52,9 @@ mod tests {
             if pid == 0 {
                 let ok = set_process_non_dumpable().is_ok();
                 let d = libc::prctl(libc::PR_GET_DUMPABLE);
+                                                                                                    
+                                                                                                        
+                #[allow(clippy::disallowed_methods)]
                 libc::_exit(if ok && d == 0 { 0 } else { 1 });
             }
             let mut status = 0;

@@ -37,7 +37,7 @@ use std::path::Path;
 
 /// The env (a built `.img` with a baked artifact-root.pub + SSH operator key + net, the matching SSH
 /// private key, and the artifact keys-dir the `.img` was baked with) the gate needs. PANICS if absent
-                                                                                            
+                                                                                             
 /// (`make boot-gate`); a missing env there is an operator error, never a silent pass — a boot gate must
 /// never report success without asserting the produced bytes.
 fn gate_env() -> (String, String, String) {
@@ -65,7 +65,8 @@ fn restore_from_verifies_before_any_write_on_produced_bytes() {
         Path::new(&img),
         Path::new(&privkey),
         Path::new(&keys_dir),
-        &orchard::deploy::dryrun::DryrunOpts::default(),
+                                                     
+        &orchard::ceremony::leg_registry::restore_from_opts(),
     )
     .expect(
         "restore-from gate: the assembled at-floor restore must install with its exact content \
@@ -73,4 +74,12 @@ fn restore_from_verifies_before_any_write_on_produced_bytes() {
          (wrong-key / tampered / over-cap / not-ext4 / journal-present / min-ctr-below-floor) \
          must each abort the installer BEFORE any write (target disk byte-untouched)",
     );
+                                                                                                  
+                                                                                                 
+                                                               
+    orchard::ceremony::gate_record::emit_leg_pass(
+        Path::new(&img),
+        "restore_from_verifies_before_any_write_on_produced_bytes",
+    )
+    .expect("emit this leg's gate-record row");
 }

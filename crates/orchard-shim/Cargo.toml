@@ -1,0 +1,20 @@
+[package]
+name = "orchard-shim"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# The shim reads the built binary's path from `cargo build --message-format=json`'s `executable`
+# field: a literal `target/release/orchard` is wrong under a redirected CARGO_TARGET_DIR.
+# A real JSON parser, not a hand-scan — the structured read the grammar-model finding calls for.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# The artifact is `orchard-shim`, NOT `orchard`: both crates build into ONE workspace
+# `target/release`, so a bin named `orchard` here silently OVERWRITES the real binary — and the
+# shim would then exec itself, forever. (Measured: it did, the first time this crate was added.)
+# The operator INSTALLS this artifact under the name `orchard`, which is what makes the documented
+# invocation form true; the name in `target/` has nothing to do with that.
+[[bin]]
+name = "orchard-shim"
+path = "src/main.rs"

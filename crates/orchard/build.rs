@@ -1,10 +1,10 @@
 //! Embed the HEAD commit as `RECIPES_BUILD_GIT_SHA` so `orchard build` can flag a STALE binary —
-                                                                                              
+                                                                                               
 //! orchestration (service tree, oneshot wiring, build sequence) is COMPILED INTO `orchard`, so a
 //! not-recompiled `orchard` would ship a stale tree under a fresh `--git-sha` label. Best-effort: a
 //! git-less build embeds "unknown" and the runtime guard (`build_image::check_build_freshness`) skips.
 //!
-                                                                                                       
+                                                                                                        
 //! `CARGO_FEATURE_DEPLOY` (so the in-image musl `recipes-admin`, built WITHOUT `deploy`, carried no sha).
 //! The deploy code moved to `orchard`, so its build-sha PRODUCER moves with its CONSUMER
 //! (`build_image.rs`'s `option_env!("RECIPES_BUILD_GIT_SHA")`) — otherwise the guard reads `None` and is
@@ -14,6 +14,8 @@
 
 use std::path::Path;
 use std::process::Command;
+
+include!("build_watch_paths.rs");
 
 fn main() {
     let sha = Command::new("git")
@@ -25,35 +27,12 @@ fn main() {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "unknown".to_owned());
     println!("cargo:rustc-env=RECIPES_BUILD_GIT_SHA={sha}");
-                                                                                                       
+                                                                                      
                                                                                                     
-                                                                                                         
-                                                                                                      
-                                                                                                        
-                                                   
-    let root = Path::new("../..");
-    let dotgit = root.join(".git");
-    let gitdir = if dotgit.is_file() {
-        std::fs::read_to_string(&dotgit)
-            .ok()
-            .and_then(|s| s.strip_prefix("gitdir:").map(|p| p.trim().to_string()))
-            .map(|p| {
-                let p = Path::new(&p);
-                if p.is_absolute() {
-                    p.to_path_buf()
-                } else {
-                    root.join(p)
-                }
-            })
-    } else {
-        Some(dotgit)
-    };
-    if let Some(gitdir) = gitdir {
-        for name in ["HEAD", "logs/HEAD"] {
-            let p = gitdir.join(name);
-            if p.exists() {
-                println!("cargo:rerun-if-changed={}", p.display());
-            }
-        }
+                                                                                                  
+                                                                                                 
+                                                                                            
+    for p in watch_paths(Path::new("../../.git")) {
+        println!("cargo:rerun-if-changed={}", p.display());
     }
 }

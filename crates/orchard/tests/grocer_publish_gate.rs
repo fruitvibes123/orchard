@@ -1,8 +1,8 @@
-                                                                                                      
-                                                                                           
+                                                                                                       
+//! close (spec §9; AC-G5a/b/c + the AC-G2 committed-pin anchor). `#[ignore]`'d + env-gated
 //! (`RECIPES_GROCER_GATE`), wired into `make boot-gate`; PANICS if run `--ignored` without the env, so it
-                                                                                                             
-                               
+                                                                                                              
+                                
 //!
 //! ## Why not the unit suite
 //! `tests/market_upgrade.rs` fakes `StepExec` (a fixed staged write) — it proves the stage/swap MACHINERY
@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use orchard::deploy::market::{VerifyOpts, verify};
-use orchard::deploy::market_exec::{ShellStepExec, Stage, default_store, execute, resolve_layout};
+use orchard::deploy::market_exec::{ShellStepExec, Stage, execute, resolve_layout};
 use orchard::deploy::market_upgrade::{Target, UpgradeError, plan};
 use recipes_image_builder::pin_manifest::PinManifest;
 use recipes_image_builder::repo_manifest::RepoManifest;
@@ -145,7 +145,7 @@ impl RealEco {
 
 /// **AC-G2** — grocer's published `grape-src` (+ `dragonfruit-src`) and ≥1 fruit-basket source drop equal the
 /// *currently-committed* `consume-pins` value (the `-C`=parent / entry=basename recipe; not merely
-                                                                                                      
+                                                                                                       
 /// fruit-basket source drops are anchored via the SHARED tar primitive grocer wraps, over the
 /// repo-manifest-resolved fruit-basket root (grocer's own resolution).
 fn anchor_committed_pins(grocer: &Path, real: &RealEco) {
@@ -210,7 +210,7 @@ fn anchor_committed_pins(grocer: &Path, real: &RealEco) {
 /// **AC-G5a** — fail-before-swap. Plan the real `--source grape-src` leg `[Publish, Repin, Vendor]`, run all
 /// three INTO the stage with the real grocer, then force the staged verify to FAIL — and assert every real
 /// artifact the swap would have touched (plus a binary control) is byte-identical before vs after. This is
-                                                                                                        
+                                                                                                         
 /// trees precisely because a forced fail must not swap.
 fn fail_before_swap_is_byte_identical(real: &RealEco) {
     eprintln!("\n[AC-G5a] fail-before-swap leaves the REAL trees byte-identical");
@@ -218,6 +218,7 @@ fn fail_before_swap_is_byte_identical(real: &RealEco) {
         &real.manifest,
         real.orchard_root.clone(),
         real.store.clone(),
+        real.orchard_root.join("repo-manifest.toml"),
     );
     let steps = plan(
         &Target::Source("grape-src".into()),
@@ -457,7 +458,12 @@ fn green_bump_lands_and_verifies(real: &RealEco, copy: &CanonicalCopy) {
     let pre_consume_text =
         String::from_utf8(read(&copy.orchard_root.join("consume-pins.toml"))).unwrap();
     let old_grape = consume.artifact("grape-src").unwrap().sha256.clone();
-    let layout = resolve_layout(&manifest, copy.orchard_root.clone(), store.clone());
+    let layout = resolve_layout(
+        &manifest,
+        copy.orchard_root.clone(),
+        store.clone(),
+        copy.orchard_root.join("repo-manifest.toml"),
+    );
     let steps = plan(&Target::Source("grape-src".into()), &manifest, &consume).unwrap();
     let mut exec = ShellStepExec {
         layout: &layout,
@@ -481,6 +487,8 @@ fn green_bump_lands_and_verifies(real: &RealEco, copy: &CanonicalCopy) {
     let staged_verify = |stage: &Stage| -> Result<(), UpgradeError> {
         let opts = VerifyOpts {
             repo_root: stage.verify_root().to_path_buf(),
+            repo_manifest: stage.verify_root().join("repo-manifest.toml"),
+            artifact_store: stage.verify_root().join("../artifact-store"),
             certs: false,
             all: false,
             allow_missing: vec![],
@@ -551,6 +559,8 @@ fn green_bump_lands_and_verifies(real: &RealEco, copy: &CanonicalCopy) {
     for (label, all) in [("default", false), ("--all", true)] {
         let opts = VerifyOpts {
             repo_root: copy.orchard_root.clone(),
+            repo_manifest: copy.orchard_root.join("repo-manifest.toml"),
+            artifact_store: copy.orchard_root.join("../artifact-store"),
             certs: false,
             all,
             allow_missing: vec![],
@@ -591,4 +601,13 @@ fn grocer_source_bump_is_atomic() {
         "
 grocer_source_bump_is_atomic: all legs PASS — atomicity proven on produced bytes."
     );
+}
+
+/// The operator-store locator for fixture SOURCING (env-honoring: the gate harness may point
+/// FRUIT_ARTIFACT_STORE at a custom store). Production resolution went to `deploy::context`
+/// (guided-ceremony C5); this local copy keeps the harness env contract.
+fn default_store(orchard_root: &std::path::Path) -> std::path::PathBuf {
+    std::env::var_os("FRUIT_ARTIFACT_STORE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| orchard_root.join("../artifact-store"))
 }

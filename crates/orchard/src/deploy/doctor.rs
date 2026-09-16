@@ -1,7 +1,7 @@
                                                                                                   
 //! "am I ready to build/deploy?" and replaces the serial-refusal first-run experience. Advisory:
-                                                                                                   
-                                                                                                     
+//! ALWAYS exits 0, NEVER a `make verify` leg (spec §11); every unmet check names its cure; a probe
+                                                                                                      
 //! `market store status` (fail-honest, exit 0, no network — mirror drift stays `market outdated`'s job).
 //!
 //! This is the PURE model (Task 5): [`run_checks`] is a predicate over an injected [`Probes`] — tests
@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-                                                                                                   
+                                                                                                    
 /// fails to RUN is Unknown, never Ok). `NA` = not applicable to this scope / this substrate (rendered `−`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckState {
@@ -19,7 +19,7 @@ pub enum CheckState {
     Unknown(String),
 }
 
-                                                                                                      
+                                                                                                       
 /// the cure column is TOTAL over the Fail rows).
 #[derive(Debug, Clone)]
 pub struct Check {
@@ -523,10 +523,11 @@ fn scan_leaked_tmp() -> bool {
 
 /// git working tree clean? `None` iff `git status` cannot run.
 fn git_clean(repo_root: &Path) -> Option<bool> {
+                                                                                                 
     let out = Command::new("git")
         .arg("-C")
         .arg(repo_root)
-        .args(["status", "--porcelain"])
+        .args(["--no-optional-locks", "status", "--porcelain"])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -535,7 +536,7 @@ fn git_clean(repo_root: &Path) -> Option<bool> {
     Some(out.stdout.is_empty())
 }
 
-                                                                                                    
+                                                                                                     
 /// A present-but-corrupt `.key` (truncated PEM, garbled header) must FAIL the readiness check, never
 /// a false ✓ — so a non-empty check is NOT enough. Best-effort: a `.key` that cannot be read or
 /// parsed ⇒ false; all three parsing ⇒ true. Reuses the crate's existing `rcgen` dep (no new crate).
@@ -670,10 +671,93 @@ impl Probes {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
     use super::*;
 
     fn all_good() -> Probes {
         Probes::all_present_for_test()
+    }
+
+    /// §3.9 P-LAST: the doctor's working-tree read must not refresh or write the index, because it can
+    /// run after a ceremony gate's identity read. The fixture's index carries ZEROED stat data (what a
+    /// gate settle leaves), which is the state a refresh rewrites; the arm drives `git_clean` and then a
+    /// bare `git status` over the same state, so the suppression is the flag's and not the fixture's.
+    #[test]
+    fn the_doctors_working_tree_read_never_refreshes_the_index() {
+        fn git(root: &Path, args: &[&str]) -> String {
+            let out = Command::new("git")
+                .current_dir(root)
+                .args(args)
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim_end().to_string()
+        }
+        /// Zero the index entry's stat data the way a gate settle does, then clear the hook log.
+        fn settle(root: &Path) {
+            use std::io::Write as _;
+            let blob = git(root, &["hash-object", "-w", "pins.toml"]);
+            let mut child = Command::new("git")
+                .current_dir(root)
+                .args(["update-index", "-z", "--index-info"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .expect("update-index");
+            child
+                .stdin
+                .take()
+                .expect("stdin")
+                .write_all(format!("100644 {blob} 0\tpins.toml\0").as_bytes())
+                .expect("w");
+            assert!(child.wait().expect("wait").success(), "the settle failed");
+            let _ = std::fs::remove_file(root.join(".git/pic.log"));
+        }
+        fn fired(root: &Path) -> String {
+            std::fs::read_to_string(root.join(".git/pic.log")).unwrap_or_default()
+        }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(&root).expect("mk root");
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@t"],
+            vec!["config", "user.name", "t"],
+        ] {
+            git(&root, &args);
+        }
+        std::fs::write(root.join("pins.toml"), "pin = 1\n").expect("w");
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-qm", "base"]);
+        let hooks = root.join(".git/hooks");
+        std::fs::create_dir_all(&hooks).expect("mk hooks");
+        std::fs::write(
+            hooks.join("post-index-change"),
+            "#!/bin/sh\necho \"$1 $2\" >> .git/pic.log\nexit 0\n",
+        )
+        .expect("w hook");
+        std::fs::set_permissions(
+            hooks.join("post-index-change"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .expect("chmod");
+
+        settle(&root);
+        assert_eq!(git_clean(&root), Some(true), "the settled tree reads clean");
+        assert_eq!(fired(&root), "", "git_clean refreshed the index");
+
+        settle(&root);
+        let _ = git(&root, &["status", "--porcelain"]);
+        assert_eq!(
+            fired(&root).trim(),
+            "0 0",
+            "a bare `git status` did not refresh, so the fixture cannot show the flag's effect"
+        );
     }
 
     #[test]

@@ -1,10 +1,11 @@
 //! Custom-kernel build driver + the build-time CONFIG assertion.
 //!
 //! The assertion is the regression guard for defense layers 4/5/6: `make olddefconfig` can
-                                                                                                
+                                                                                                 
 //! unnoticed for 7 audit rounds, leaving lockdown absent). [`assert_kernel_config`] checks every
-//! required symbol against the produced `.config` (post-`olddefconfig`, pre-`make`) and aborts
-//! the build on the first miss with the spec's exact message.
+//! required symbol against the produced `.config` (post-`olddefconfig`, Rust-side after
+                                                                                           
+//! message.
 //!
 //! **kconfig `=n` note.** The spec's build-pipeline block writes the assertion as
 //! `grep -qx "^$cfg$" .config` for every symbol including `CONFIG_MODULES=n`. But kconfig emits a
@@ -36,6 +37,12 @@ pub struct KernelConfigPins {
     /// Bool/tristate/value symbols whose `.config` line must match exactly, e.g. `CONFIG_IMA=y`.
     /// A `=n` entry asserts the symbol is DISABLED and accepts kconfig's `# CONFIG_X is not set`.
     pub exact_match: Vec<String>,
+    /// Observed symbols: asserted in the produced `.config` post-olddefconfig, and MUST NOT appear
+    /// in any hardening fragment — the fragment never force-repairs them, so a base-config drift
+    /// fails the build. Same match semantics and failure message as [`Self::exact_match`].
+                                                                                               
+    #[serde(default)]
+    pub observe_exact: Vec<String>,
     /// String-valued symbols with per-build content (a key path) — the `.config` must contain a
     /// line STARTING with the prefix, e.g. `CONFIG_SYSTEM_TRUSTED_KEYS="`.
     pub prefix_match: Vec<String>,
@@ -75,6 +82,7 @@ impl KernelConfigPins {
         let cat = |a: &[String], b: &[String]| a.iter().chain(b).cloned().collect();
         KernelConfigPins {
             exact_match: cat(&self.exact_match, &other.exact_match),
+            observe_exact: cat(&self.observe_exact, &other.observe_exact),
             prefix_match: cat(&self.prefix_match, &other.prefix_match),
             forbidden: cat(&self.forbidden, &other.forbidden),
             forbidden_prefix: cat(&self.forbidden_prefix, &other.forbidden_prefix),
@@ -86,25 +94,28 @@ impl KernelConfigPins {
     }
 }
 
+/// Whole-line match for an exact/observe pin. A `=n` entry accepts kconfig's canonical disabled
+/// form `# CONFIG_X is not set` (the literal `CONFIG_X=n` too, harmlessly).
+fn exact_line_present(dot_config: &str, cfg: &str) -> bool {
+    match cfg.strip_suffix("=n") {
+        Some(sym) => {
+            let disabled = format!("# {sym} is not set");
+            dot_config
+                .lines()
+                .any(|l| l == disabled.as_str() || l == cfg)
+        }
+        None => dot_config.lines().any(|l| l == cfg),
+    }
+}
+
 /// Assert every required CONFIG is present in the produced `.config`. Returns the first failure
 /// with the spec's message; the build aborts on the first miss.
 pub fn assert_kernel_config(
     dot_config: &str,
     pins: &KernelConfigPins,
 ) -> Result<(), ConfigAssertError> {
-    for cfg in &pins.exact_match {
-        let present = match cfg.strip_suffix("=n") {
-                                                                                                 
-                                                         
-            Some(sym) => {
-                let disabled = format!("# {sym} is not set");
-                dot_config
-                    .lines()
-                    .any(|l| l == disabled.as_str() || l == cfg.as_str())
-            }
-            None => dot_config.lines().any(|l| l == cfg.as_str()),
-        };
-        if !present {
+    for cfg in pins.exact_match.iter().chain(&pins.observe_exact) {
+        if !exact_line_present(dot_config, cfg) {
             return Err(ConfigAssertError::Missing(format!(
                 "FAIL: {cfg} not in .config"
             )));
@@ -168,7 +179,7 @@ mod tests {
     /// L5 (SB-loader plan Task 2.1): ONE plain kernel serves both firmwares — the
     /// shared pins carry the EFI bootability pair (the loader `LoadImage`s this PE)
     /// and the UEFI tty0 console chain (operability pins, not security pins —
-                                                                 
+                                                                  
     #[test]
     fn shared_pins_require_efi_stub_and_console_chain() {
         let pins = KernelConfigPins::from_toml_str(include_str!("../kernel-config-pins.toml"))
@@ -188,13 +199,14 @@ mod tests {
         }
     }
 
-                                                                                                 
+                                                                                                  
     /// carry a symbol is satisfied by kconfig's disabled comment OR total absence, and refuses only
     /// the live `=y` line (the vps-kvm side forbids the four USB host/storage drivers).
     #[test]
     fn forbidden_passes_on_disabled_comment_and_on_omission_fails_on_present() {
         let pins = KernelConfigPins {
             exact_match: vec![],
+            observe_exact: vec![],
             prefix_match: vec![],
             forbidden: vec!["CONFIG_USB=y".into()],
             forbidden_prefix: vec![],
@@ -221,6 +233,7 @@ mod tests {
     fn forbidden_prefix_fails_closed_on_any_domain_driver_except_the_allowlist() {
         let pins = KernelConfigPins {
             exact_match: vec![],
+            observe_exact: vec![],
             prefix_match: vec![],
             forbidden: vec![],
             forbidden_prefix: vec!["CONFIG_USB".into()],
@@ -249,6 +262,7 @@ mod tests {
     fn union_concatenates_and_asserts_both_blocks() {
         let shared = KernelConfigPins {
             exact_match: vec!["CONFIG_IMA=y".into()],
+            observe_exact: vec![],
             prefix_match: vec![],
             forbidden: vec![],
             forbidden_prefix: vec![],
@@ -256,6 +270,7 @@ mod tests {
         };
         let vpskvm = KernelConfigPins {
             exact_match: vec![],
+            observe_exact: vec![],
             prefix_match: vec![],
             forbidden: vec!["CONFIG_USB=y".into()],
             forbidden_prefix: vec![],
@@ -284,7 +299,7 @@ mod tests {
         let pins = KernelConfigPins::from_toml_str(include_str!("../kernel-config-pins.toml"))
             .expect("shared pins parse");
         let mut c = String::new();
-        for sym in pins.exact_match {
+        for sym in pins.exact_match.iter().chain(&pins.observe_exact) {
             match sym.strip_suffix("=n") {
                 Some(s) => c.push_str(&format!("# {s} is not set\n")),
                 None => c.push_str(&format!("{sym}\n")),
@@ -294,7 +309,7 @@ mod tests {
         c
     }
 
-                                                                                  
+                                                                                   
     /// ONE kernel both firmwares boot must keep the EFI pair AND the integrity base;
     /// olddefconfig dropping either aborts the build before any .img write.
     #[test]
@@ -315,5 +330,26 @@ mod tests {
                                                                                
         let no_ima = good_shared_config().replace("CONFIG_IMA_APPRAISE=y\n", "");
         assert!(assert_kernel_config(&no_ima, &pins).is_err());
+    }
+
+    /// An `observe_exact` symbol absent from the produced `.config` fails with the same error type
+                                                                         
+    #[test]
+    fn observe_exact_absent_fails_like_exact_match() {
+        let pins = KernelConfigPins {
+            exact_match: vec![],
+            observe_exact: vec!["CONFIG_RANDOMIZE_BASE=y".into()],
+            prefix_match: vec![],
+            forbidden: vec![],
+            forbidden_prefix: vec![],
+            forbidden_prefix_allow: vec![],
+        };
+        assert!(assert_kernel_config("CONFIG_RANDOMIZE_BASE=y\n", &pins).is_ok());
+        let e = assert_kernel_config("# CONFIG_RANDOMIZE_BASE is not set\n", &pins).unwrap_err();
+        assert!(
+            matches!(e, ConfigAssertError::Missing(ref m)
+                if m == "FAIL: CONFIG_RANDOMIZE_BASE=y not in .config"),
+            "got {e:?}"
+        );
     }
 }

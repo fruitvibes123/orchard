@@ -46,20 +46,15 @@ use super::market_upgrade::{Step, UpgradeError};
 pub struct StoreLayout {
     /// The orchard repo root (holds `consume-pins.toml`, `vendor/`, `pins.toml`, the build).
     pub orchard_root: PathBuf,
-    /// The shared artifact-store (`$FRUIT_ARTIFACT_STORE` or `<orchard>/../artifact-store`).
+    /// The shared artifact-store (C5-resolved at the CLI: the context chain's store value).
     pub store: PathBuf,
+    /// The repo-manifest PATH the run resolved (C5); handed verbatim to grocer so a staged
+    /// publish reads the SAME manifest this run's verify used, even under --repo-manifest.
+    pub repo_manifest: PathBuf,
     /// repo name -> resolved real repo dir (the publish.sh + `published-pins.toml` owner).
     pub repos: BTreeMap<String, PathBuf>,
-                                                                                  
+                                                                                   
     pub cert_trail: Option<PathBuf>,
-}
-
-/// The default artifact-store location, matching `publish.sh`/`orchard vendor` (`$FRUIT_ARTIFACT_STORE`, else
-/// `<orchard>/../artifact-store`).
-pub fn default_store(orchard_root: &Path) -> PathBuf {
-    std::env::var_os("FRUIT_ARTIFACT_STORE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| orchard_root.join("../artifact-store"))
 }
 
 /// Resolve the real layout from the repo-manifest (repo paths are joined lexically onto `orchard_root`,
@@ -68,6 +63,7 @@ pub fn resolve_layout(
     manifest: &RepoManifest,
     orchard_root: PathBuf,
     store: PathBuf,
+    repo_manifest: PathBuf,
 ) -> StoreLayout {
     let repos = manifest
         .repos
@@ -78,6 +74,7 @@ pub fn resolve_layout(
     StoreLayout {
         orchard_root,
         store,
+        repo_manifest,
         repos,
         cert_trail,
     }
@@ -320,7 +317,7 @@ impl Stage {
     /// Reserve a staged path for a single-file write to `real_file`: copy-up the parent chain (so siblings
     /// stay read-through), shadow the read-through symlink with a real COPY of the current content, record the
     /// swap, and return the staged path for the caller to read-modify-write. The real file is NOT touched
-                                                                                                         
+                                                                                                          
     /// `sync_pins`) read the staged path before overwriting it, so it must hold the current content, never be
     /// empty; a whole-file writer (publish.sh via `PUBLISHED_OUT=`) simply overwrites the copy.
     pub fn stage_write(&mut self, real_file: &Path) -> Result<PathBuf, UpgradeError> {
@@ -377,7 +374,7 @@ impl Stage {
     }
 
     /// Materialize the staged artifact-store as a SYMLINK-FREE real dir for a `publish.sh` shell-out
-                                                                                                            
+                                                                                                             
     /// from the staged store), and every other store entry's symlink is REMOVED (the staged hot-path verify
     /// never reads the store; publish writes its own repo's fresh artifacts). With ZERO symlinks remaining, a
     /// `cp "$src" "$STORE/$key"` for ANY key — even one outside the repo's manifest set — lands in the stage,
@@ -514,7 +511,7 @@ pub fn execute(
 
                                                                                                              
 /// re-implementation): `Publish` runs the `grocer` publisher with the staged `--store`/`--published-out` (no
-                                                                                                                                     
+                                                                                                                                      
 /// orchard as their root; `Repin` rewrites the staged `consume-pins.toml` from the staged `published-pins.toml`;
 /// `BumpUpstream` writes the staged `pins.toml`. The docker/network legs are operator-exercised (the atomicity
 /// machinery is what the build-time test proves).
@@ -587,7 +584,7 @@ pub struct DockerContainerBuilder {
 /// `rewrite-timestamp=true` clamps layer-tar file mtimes to the epoch; `unpack=false` is MANDATORY —
 /// rewrite-timestamp conflicts with the containerd store's default unpack (`docker run` unpacks on
 /// demand; `--iidfile` is still written). Preconditions + the HONEST failure chain (audit R1, both
-                                                                                                     
+                                                                                                      
 /// own builder (pinned below via `--builder default`). A non-containerd daemon rejects `type=image`
 /// itself LOUDLY (before this attr is evaluated). A pre-0.13 BuildKit instead ACCEPTS the attr and
 /// silently ignores it — no error, mtimes stay wall-clock (empirically proven at v0.12.5) — and the
@@ -675,10 +672,10 @@ impl ShellStepExec<'_> {
     }
 
     /// Run `grocer` (the narrow publisher) with the STAGED `--store`/`--published-out` so every byte it
-                                                                                                 
+                                                                                                  
     /// `repo-manifest.toml`/`consume-pins.toml` (so it resolves the repo's path to the LIVE source it tars,
     /// and the kinds/keys it cross-checks are the authoritative ones) but WRITES only the two staged paths it
-                                                                                                             
+                                                                                                              
     /// incl. ones owned by repos NOT republished this run — is copied in as a real file so the `Vendor` leg
     /// finds them, grocer overwrites its own repo's source keys atomically, and the repo's published store
     /// entries are recorded for the swap.
@@ -745,7 +742,7 @@ impl ShellStepExec<'_> {
                                                                                                            
                                                          
         let grocer = Self::grocer_path()?;
-        let real_repo_manifest = self.layout.orchard_root.join("repo-manifest.toml");
+        let real_repo_manifest = self.layout.repo_manifest.clone();
         let real_consume_pins = self.layout.orchard_root.join("consume-pins.toml");
         let out = Self::grocer_command(
             &grocer,
@@ -807,7 +804,7 @@ impl ShellStepExec<'_> {
             .collect();
         let staged_store = stage.symlink_free_store(&self.layout.store, &source_keys)?;
         let grocer = Self::grocer_path()?;
-        let real_repo_manifest = self.layout.orchard_root.join("repo-manifest.toml");
+        let real_repo_manifest = self.layout.repo_manifest.clone();
         let real_consume_pins = self.layout.orchard_root.join("consume-pins.toml");
         let out = Self::grocer_command(
             &grocer,
@@ -844,7 +841,7 @@ impl ShellStepExec<'_> {
     /// sha), never globbed, and re-checked through the ONE name classifier before any join. A pins
     /// entry whose revision file is MISSING from the staged store is a HARD step error — the write
     /// half must never silently drop a revision, or the coexistence guarantee goes undelivered
-                                                                                              
+                                                                                               
     fn record_published_swaps(
         &self,
         repo: &str,
@@ -863,8 +860,8 @@ impl ShellStepExec<'_> {
     }
 
     /// Record swaps for EXACTLY `keys` (the config-subset case — grocer published only these) with the
-                                                                                                          
-                                                                                     
+    /// SAME revision-must-land assert as the whole-repo [`Self::record_published_swaps`] (spec §4.6 write
+                                                                                      
     fn record_published_swaps_scoped(
         &self,
         repo: &str,
@@ -883,8 +880,8 @@ impl ShellStepExec<'_> {
     /// Record the swap for ONE published key — both name shapes (the flat alias + the `<key>@<sha>`
     /// revision, the sha read from the staged published-pins grocer just wrote). The revision name is
     /// CONSTRUCTED (manifest key + pins sha), never globbed, and re-checked through the ONE name classifier
-                                                                                                          
-                                                                                                          
+                                                                                                           
+                                                                                                           
     /// Shared by the whole-repo + the config-subset recorders, so the subset's assert is identical.
     fn record_one_published_swap(
         &self,
@@ -977,7 +974,7 @@ impl ShellStepExec<'_> {
     }
 
     /// Build the `grocer` invocation: destinations are the STAGED store + published-pins; NO `STORE=`/
-                                                                                                            
+                                                                                                             
     /// repo also passes the build-only handoff as `--build-dir` so grocer can locate + ELF-assert each
     /// pre-built binary; source/config-only publishes pass `None` (F-2ES-R1-9 — the Arg was inert). A
     /// testable seam. A TARGETED config subset also passes `--config-key <key>` (publish exactly that one
@@ -1547,7 +1544,11 @@ mod tests {
         let orchard = base.path().join("eco/orchard");
         fs::create_dir_all(orchard.join("vendor")).unwrap();
         fs::write(orchard.join("consume-pins.toml"), "schema-version = 1\n").unwrap();
-        fs::write(orchard.join("repo-manifest.toml"), "schema-version = 1\n").unwrap();
+        fs::write(
+            crate::deploy::context::manifest_default(&orchard),
+            "schema-version = 1\n",
+        )
+        .unwrap();
         fs::write(orchard.join("vendor/marker"), "v1").unwrap();
         let sibling = base.path().join("eco/seed-vault");
         fs::create_dir_all(&sibling).unwrap();
@@ -1555,6 +1556,7 @@ mod tests {
         let layout = StoreLayout {
             orchard_root: orchard.clone(),
             store: base.path().join("eco/artifact-store"),
+            repo_manifest: crate::deploy::context::manifest_default(&orchard),
             repos: BTreeMap::from([("seed-vault".to_string(), sibling)]),
             cert_trail: None,
         };
@@ -1647,12 +1649,17 @@ mod tests {
         let orchard = base.path().join("eco/orchard");
         fs::create_dir_all(orchard.join("vendor")).unwrap();
         fs::write(orchard.join("consume-pins.toml"), "schema-version = 1\n").unwrap();
-        fs::write(orchard.join("repo-manifest.toml"), "schema-version = 1\n").unwrap();
+        fs::write(
+            crate::deploy::context::manifest_default(&orchard),
+            "schema-version = 1\n",
+        )
+        .unwrap();
         let store = base.path().join("eco/artifact-store");
         fs::create_dir_all(&store).unwrap();
         fs::write(store.join("grape-src"), b"SRC").unwrap();                
         fs::write(store.join("fb-acme"), b"BIN").unwrap();            
         let layout = StoreLayout {
+            repo_manifest: crate::deploy::context::manifest_default(&orchard),
             orchard_root: orchard,
             store: store.clone(),
             repos: BTreeMap::new(),
@@ -1691,7 +1698,11 @@ mod tests {
         let orchard = base.path().join("eco/orchard");
         fs::create_dir_all(orchard.join("vendor")).unwrap();
         fs::write(orchard.join("consume-pins.toml"), "schema-version = 1\n").unwrap();
-        fs::write(orchard.join("repo-manifest.toml"), "schema-version = 1\n").unwrap();
+        fs::write(
+            crate::deploy::context::manifest_default(&orchard),
+            "schema-version = 1\n",
+        )
+        .unwrap();
         let store = base.path().join("eco/artifact-store");
         fs::create_dir_all(&store).unwrap();
         let sha_a = "a".repeat(64);
@@ -1701,6 +1712,7 @@ mod tests {
         fs::write(store.join(format!("box-init@{sha_b}")), b"BINREV").unwrap();                               
         fs::write(store.join("junk@bad@name"), b"JUNK").unwrap();                       
         let layout = StoreLayout {
+            repo_manifest: crate::deploy::context::manifest_default(&orchard),
             orchard_root: orchard,
             store: store.clone(),
             repos: BTreeMap::new(),

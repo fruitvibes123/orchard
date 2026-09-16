@@ -4,19 +4,19 @@
 //! path — a serving box whose operator SSH is root) and drives the two coupled components on the
 //! real, re-pinned `fb-oneshots` / `fb-acme` binaries + the periodic_loop `service-manifest`:
 //!
-                                                                                                  
-                                                                                                  
-                                                                                                  
-                                                                                             
-                                                                                                     
                                                                                                    
-                                                                                          
-                                                                                                          
+                                                                                                   
+                                                                                                   
+                                                                                              
+                                                                                                      
+                                                                                                    
                                                                                            
-                                                                                               
-                                                                                          
-                                                                                                
+                                                                                                           
                                                                                             
+                                                                                                
+                                                                                           
+                                                                                                 
+                                                                                             
 //!
 //! The renewer cadence is a full day (86400 s), so the gate can't wait for a natural cycle: it runs
 //! the EXACT scheduled loop-body (`s6-envdir … s6-setuidgid fb-acme … fb-acme renew …`) once over
@@ -218,7 +218,7 @@ struct MintedCert {
     cert_pem: std::path::PathBuf,
 }
 
-fn require_openssl() -> Result<(), DryrunError> {
+pub(super) fn require_openssl() -> Result<(), DryrunError> {
     Command::new("openssl")
         .arg("version")
         .stdout(std::process::Stdio::null())
@@ -237,7 +237,7 @@ fn require_openssl() -> Result<(), DryrunError> {
 /// Mint a distinct self-signed P-256 leaf (Issuer==Subject) into `<wd>/<tag>-full.pem`. The key is
 /// PKCS#8 (`genpkey`, matching the box's real full.pem shape) — see [`mint_real_shaped`]; keeping both
 /// minters on `genpkey` also avoids the version-dependent SEC1/PKCS#8 output of `req -newkey ec`
-                             
+                              
 fn mint_selfsigned(wd: &Path, tag: &str, cn: &str) -> Result<MintedCert, DryrunError> {
     let key = wd.join(format!("{tag}.key"));
     let cert = wd.join(format!("{tag}.crt"));
@@ -276,9 +276,9 @@ fn mint_selfsigned(wd: &Path, tag: &str, cn: &str) -> Result<MintedCert, DryrunE
 ///
 /// The leaf key is PKCS#8 (`genpkey` → `-----BEGIN PRIVATE KEY-----`), matching the box's real
 /// `full.pem` (rcgen/instant-acme + the fb-oneshots selfsign bootstrap all emit PKCS#8) — a fidelity
-                                                                                                     
+                                                                                                      
 /// `EC PRIVATE KEY` block "errors x509-parser's PEM iterator": it does NOT — verified against
-                                                                                                    
+                                                                                                     
 /// OWNERSHIP one in `stage_cert_atomic` (chown to fb-acme so the uid-101 renewer can read the cert);
 /// the key encoding was never the cause.)
 fn mint_real_shaped(wd: &Path, cn: &str) -> Result<MintedCert, DryrunError> {
@@ -376,7 +376,7 @@ fn openssl(args: &[&str]) -> Result<(), DryrunError> {
 }
 
 /// The SHA-256 fingerprint of a cert PEM, normalized (hex, no colons, uppercase).
-fn cert_fingerprint(cert_pem: &Path) -> Result<String, DryrunError> {
+pub(super) fn cert_fingerprint(cert_pem: &Path) -> Result<String, DryrunError> {
     let out = Command::new("openssl")
         .args([
             "x509",
@@ -392,7 +392,7 @@ fn cert_fingerprint(cert_pem: &Path) -> Result<String, DryrunError> {
 }
 
 /// The SHA-256 fingerprint of the leaf actually SERVED on `:https_port`, via a host `s_client`.
-fn served_leaf_fp(https_port: u16, domain: &str) -> Result<String, DryrunError> {
+pub(super) fn served_leaf_fp(https_port: u16, domain: &str) -> Result<String, DryrunError> {
     let pipeline = format!(
         "echo | openssl s_client -connect 127.0.0.1:{https_port} -servername {domain} 2>/dev/null \
          | openssl x509 -noout -fingerprint -sha256"
@@ -477,7 +477,7 @@ fn assert_ne_fp(a: &str, b: &str, msg: &str) -> Result<(), DryrunError> {
 /// writes its cert AS uid 101): we stage over root SSH, so without the `chown` the file lands
 /// `root:root 0600` and the renewer — which drops to uid 101 via `s6-setuidgid fb-acme` — hits EACCES
 /// reading it and (correctly, per the totality arm) classifies it `Unparseable`⇒Obtain, defeating the
-                                                                                                
+                                                                                                 
 /// (Boot-gate-proven 2026-07-21.)
 fn stage_cert_atomic(
     privkey: &Path,
@@ -525,7 +525,7 @@ fn haproxy_master_pid(privkey: &Path, port: u16) -> Result<String, DryrunError> 
 }
 
 /// Which domain the box serves — the single dir under `/persist/acme` the bootstrap oneshot created.
-fn discover_domain(privkey: &Path, port: u16) -> Result<String, DryrunError> {
+pub(super) fn discover_domain(privkey: &Path, port: u16) -> Result<String, DryrunError> {
     let (ok, out) = ssh_capture(privkey, port, "ls -1 /persist/acme")?;
     let domain = out.lines().map(str::trim).find(|l| !l.is_empty());
     match (ok, domain) {
@@ -552,7 +552,7 @@ fn run_renew_cycle(
     ssh_capture(privkey, port, &cmd)
 }
 
-                                                                                                     
+                                                                                                      
 /// the daily periodic_loop with envdir preserved — the property `run_renew_cycle` can't prove because
 /// it hand-builds the loop body (the 86400 s cadence can't be waited out). A render regression to
 /// `exec`, a dropped `s6-envdir`, or a wrong interval would strand the "re-issuance loop is dead"
@@ -588,7 +588,7 @@ fn assert_renew_render_sealed(privkey: &Path, port: u16) -> Result<(), DryrunErr
     Ok(())
 }
 
-                                                                                               
+                                                                                                
 /// PROMPTLY (the O_NONBLOCK + S_ISREG hardening) rather than blocking forever on the FIFO. A wedge
 /// would be killed by `timeout 15` → exit 124; a healthy reader exits 0 well under it.
 fn assert_fifo_no_wedge(privkey: &Path, port: u16) -> Result<(), DryrunError> {
@@ -620,7 +620,11 @@ fn assert_fifo_no_wedge(privkey: &Path, port: u16) -> Result<(), DryrunError> {
 }
 
 /// SSH a command, capturing `(success, combined-ish stdout)`. Mirrors `install_dha`'s helper.
-fn ssh_capture(privkey: &Path, port: u16, cmd: &str) -> Result<(bool, String), DryrunError> {
+pub(super) fn ssh_capture(
+    privkey: &Path,
+    port: u16,
+    cmd: &str,
+) -> Result<(bool, String), DryrunError> {
     let out = Command::new("ssh")
         .args(ssh_base_args(privkey, port))
         .arg(cmd)

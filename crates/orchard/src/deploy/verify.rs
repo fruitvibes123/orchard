@@ -5,7 +5,7 @@
 //! block. This proves DETERMINISM, not integrity: a compromised build host injects the same bytes
 //! both times, so the two builds still match. Compromise detection requires an INDEPENDENT
 //! rebuilder comparing hashes — which this command *enables* (by producing a stable, publishable
-                                                                                                             
+                                                                                                              
 //! Task 3. Cross-operator core comparison is deferred research — out of scope here.)
 
 use std::path::Path;
@@ -360,6 +360,7 @@ mod tests {
             keys_dir: "/tmp/recipes-test-keys".into(),
             kernel_src: crate::deploy::build_image::default_kernel_xz(&repo_root).unwrap(),
             syslinux_src: crate::deploy::build_image::default_syslinux_src(&repo_root).unwrap(),
+            artifact_store: crate::deploy::context::store_default(&repo_root),
             repo_root,
             out_dir: out.path().to_path_buf(),
             domain: "recipes.example.org".into(),
@@ -373,6 +374,8 @@ mod tests {
             manifest_path: None,
             image_version: 0,
             runtime_weights: false,
+            dha_weights_gguf: None,
+            dha_mmproj_gguf: None,
         };
         let outcome = verify_build(&opts).expect("verify build");
         assert!(outcome.identical, "the box must build reproducibly (R.4)");

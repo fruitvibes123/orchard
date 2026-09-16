@@ -1,6 +1,6 @@
 //! PRODUCED-BYTES gate for `market upgrade --rust` (Component C; AC-C-7). `#[ignore]`d + env-gated
 //! (`RECIPES_RUST_GATE`), wired into `make boot-gate`; PANICS if run `--ignored` without the env, so it
-                                                                                           
+                                                                                            
 //!
 //! ## What it proves on produced bytes
                                                                                                    
@@ -30,8 +30,7 @@ use std::time::SystemTime;
 
 use orchard::deploy::market::{VerifyOpts, verify};
 use orchard::deploy::market_exec::{
-    DockerContainerBuilder, ShellStepExec, Stage, StepExec, StoreLayout, default_store, execute,
-    resolve_layout,
+    DockerContainerBuilder, ShellStepExec, Stage, StepExec, StoreLayout, execute, resolve_layout,
 };
 use orchard::deploy::market_upgrade::{Step, Target, UpgradeError, plan};
 use orchard::deploy::rust_bump::{RUST_MANIFEST_BASE, RustBump, bump_rust};
@@ -163,7 +162,12 @@ fn phase1_real_key_rejects_and_is_atomic(fx: &Fixture) {
     let manifest = RepoManifest::load(&orchard_root.join("repo-manifest.toml")).unwrap();
     let consume = PinManifest::load(&orchard_root.join("consume-pins.toml")).unwrap();
     let store = default_store(&orchard_root);
-    let layout = resolve_layout(&manifest, orchard_root.clone(), store);
+    let layout = resolve_layout(
+        &manifest,
+        orchard_root.clone(),
+        store,
+        orchard_root.join("repo-manifest.toml"),
+    );
 
     let watched: Vec<PathBuf> = four_pins(&orchard_root, &manifest)
         .into_iter()
@@ -359,7 +363,12 @@ fn phase2_green_bump_lands_and_verifies(fx: &Fixture) {
     let manifest = RepoManifest::load(&copy.orchard_root.join("repo-manifest.toml")).unwrap();
     let consume = PinManifest::load(&copy.orchard_root.join("consume-pins.toml")).unwrap();
     let store = copy.orchard_root.join("../artifact-store");
-    let layout = resolve_layout(&manifest, copy.orchard_root.clone(), store);
+    let layout = resolve_layout(
+        &manifest,
+        copy.orchard_root.clone(),
+        store,
+        copy.orchard_root.join("repo-manifest.toml"),
+    );
 
                                                                                                          
                                                                                                         
@@ -389,6 +398,8 @@ fn phase2_green_bump_lands_and_verifies(fx: &Fixture) {
     let staged_verify = |stage: &Stage| -> Result<(), UpgradeError> {
         let opts = VerifyOpts {
             repo_root: stage.verify_root().to_path_buf(),
+            repo_manifest: stage.verify_root().join("repo-manifest.toml"),
+            artifact_store: stage.verify_root().join("../artifact-store"),
             certs: false,
             all: false,
             allow_missing: vec![],
@@ -423,6 +434,8 @@ fn phase2_green_bump_lands_and_verifies(fx: &Fixture) {
     for (label, all) in [("default", false), ("--all", true)] {
         let opts = VerifyOpts {
             repo_root: copy.orchard_root.clone(),
+            repo_manifest: copy.orchard_root.join("repo-manifest.toml"),
+            artifact_store: copy.orchard_root.join("../artifact-store"),
             certs: false,
             all,
             allow_missing: vec![],
@@ -442,7 +455,12 @@ fn phase2_tampered_leaves_copy_byte_identical(fx: &Fixture) {
     let manifest = RepoManifest::load(&copy.orchard_root.join("repo-manifest.toml")).unwrap();
     let consume = PinManifest::load(&copy.orchard_root.join("consume-pins.toml")).unwrap();
     let store = copy.orchard_root.join("../artifact-store");
-    let layout = resolve_layout(&manifest, copy.orchard_root.clone(), store);
+    let layout = resolve_layout(
+        &manifest,
+        copy.orchard_root.clone(),
+        store,
+        copy.orchard_root.join("repo-manifest.toml"),
+    );
     let steps = vec![Step::BumpUpstream {
         which: "rust",
         version: fx.version.clone(),
@@ -520,6 +538,7 @@ fn phase3_container_rebuild_mechanism() {
     let layout = StoreLayout {
         orchard_root: orchard.clone(),
         store: base.path().join("eco/artifact-store"),
+        repo_manifest: orchard.join("repo-manifest.toml"),
         repos: BTreeMap::new(),
         cert_trail: None,
     };
@@ -623,4 +642,13 @@ fn rust_upgrade_is_verified_and_atomic() {
          (copy, green-lands + tampered-atomic) + Phase 3 (container-rebuild mechanism) all PASS — \
          --rust proven on produced bytes."
     );
+}
+
+/// The operator-store locator for fixture SOURCING (env-honoring: the gate harness may point
+/// FRUIT_ARTIFACT_STORE at a custom store). Production resolution went to `deploy::context`
+/// (guided-ceremony C5); this local copy keeps the harness env contract.
+fn default_store(orchard_root: &std::path::Path) -> std::path::PathBuf {
+    std::env::var_os("FRUIT_ARTIFACT_STORE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| orchard_root.join("../artifact-store"))
 }

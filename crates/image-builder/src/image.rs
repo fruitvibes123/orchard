@@ -4,7 +4,7 @@
 //! squashfs to a 4096 boundary + append the dm-verity hash tree), then concatenate the three
 //! PRE-BAKED partition components into the single-blob `.img` and emit the `.layout.toml` sidecar of
 //! byte offsets. Pure (no external tools, no randomness) so the layer-8 determinism contract + the
-                                                                                           
+                                                                                            
 //! `bake_persist_skeleton` / `pack_squashfs` / `build_verity` / kernel) carry their determinism via
 //! their pinned argv + an empirical double-build (see [`crate::build_tools_host`]).
 //!
@@ -12,13 +12,13 @@
 //! or a partitioned disk image — the on-box installer `dd`s each component to its partition:
 //!   `boot-component || persist-skeleton || (squashfs padded to 4096 || verity hash tree)`.
 //! The kernel + initramfs are NOT in the `.img` (they live inside the boot-component's ext4 + are also
-                                                                                                     
+                                                                                                      
 //! are firmware-NEUTRAL (`boot_offset`/`boot_size` — the boot component is an opaque blob, ext4+syslinux
 //! under SeaBIOS or a FAT ESP holding the rambutan SB loader under UEFI) plus a `firmware` field.
 //!
 //! **Output is the UNSIGNED triple** `.img` + `.layout.toml` + `.sha256` (+ the local `.vmlinuz` /
 //! `.initramfs` kexec artifacts) — the operator-sovereign ed25519 `.sig` is forward-debt (covers the
-                                                                                    
+                                                                                     
 
 use std::path::{Path, PathBuf};
 
@@ -26,7 +26,7 @@ use crate::firmware::{Firmware, Substrate};
 
 /// dm-verity / squashfs data-block size. The squashfs portion is zero-padded up to
 /// a multiple of this so the verity hash tree (and `fb.verity-hash-offset`)
-                                          
+                                           
 pub const BLOCK_SIZE: usize = 4096;
 
 /// Byte offsets/sizes of the three `.img` components, written to `<img>.layout.toml` so the on-box
@@ -42,13 +42,13 @@ pub struct Layout {
     pub rootfs_size: u64,
     /// Where the verity hash tree begins WITHIN the rootfs partition (= the padded
     /// squashfs size). Carried into the slot-A extlinux APPEND as `fb.verity-hash-offset`
-                                                                             
-                                                                             
+                                                                              
+                                                                              
     pub rootfs_verity_hash_offset: u64,
     /// dha Component E (O4=GPT): the weights component's byte range within the `.img` blob (appended
     /// after rootfs) + where its verity hash tree begins within it. `Some` only for a dha box; the
     /// installer dd's `[weights_offset .. +weights_size]` into the 5th GPT partition. `None` ⇒ no
-                                                                                                  
+                                                                                                   
     pub weights_offset: Option<u64>,
     pub weights_size: Option<u64>,
     pub weights_verity_hash_offset: Option<u64>,
@@ -75,7 +75,7 @@ pub struct RootfsComponent {
 /// Build the rootfs partition component: zero-pad the squashfs up to a [`BLOCK_SIZE`]
 /// multiple, then append the verity hash tree. The pad makes the verity tree start
 /// on a block boundary so `fb.verity-hash-offset` (= padded size =
-                                                                                  
+                                                                                   
 pub fn build_rootfs_component(squashfs: &[u8], verity_hash_tree: &[u8]) -> RootfsComponent {
     let padded_len = squashfs.len().next_multiple_of(BLOCK_SIZE);
     debug_assert_eq!(padded_len % BLOCK_SIZE, 0);
@@ -163,8 +163,8 @@ pub fn assemble_img(
     (img, layout)
 }
 
-                                                                           
-                                                                                  
+                                                                            
+                                                                                   
 /// covers the `.img` bytes only, so tampering with the layout makes `verify` fail
 /// (wrong byte-range → wrong hash → sig mismatch), it does not bypass.
 pub fn render_layout_toml(layout: &Layout) -> String {
@@ -229,7 +229,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// The unsigned build outputs (Task 2.3 + O3). The `.sig` (operator-sovereign ed25519) is forward-debt.
 /// `vmlinuz` + `initramfs` are LOCAL kexec artifacts (NOT in the `.img`): the deploy CLI `kexec -l`s
-                                                                                        
+                                                                                         
 #[derive(Debug, Clone)]
 pub struct ImageOutputs {
     pub img: PathBuf,
@@ -245,8 +245,16 @@ pub struct ImageOutputs {
 /// `recipes-image-<image_label>.{img,layout.toml,sha256,vmlinuz,initramfs}`. Deterministic: identical
 /// inputs → byte-identical files (the `.img` carries the layer-8 reproducibility contract). The
 /// `.sha256` sidecars use `sha256sum` format (`<hex>  <name>\n`) — one per scp'd artifact
-                                                                                              
+                                                                                               
 /// on-target before kexec.
+/// The output basename of one built image: `recipes-image-<image_label>`. The ONE home of the
+/// convention — `write_image_outputs` names every file from it, and the ceremony runner derives
+/// the same paths from a step record's label to decide whether S7's product is still on disk
+                                                                                     
+pub fn image_output_base(image_label: &str) -> String {
+    format!("recipes-image-{image_label}")
+}
+
 pub fn write_image_outputs(
     out_dir: &Path,
     image_label: &str,
@@ -256,7 +264,7 @@ pub fn write_image_outputs(
     initramfs: &[u8],
 ) -> std::io::Result<ImageOutputs> {
     std::fs::create_dir_all(out_dir)?;
-    let base = format!("recipes-image-{image_label}");
+    let base = image_output_base(image_label);
     let img_path = out_dir.join(format!("{base}.img"));
     let layout_path = out_dir.join(format!("{base}.layout.toml"));
     let sha_path = out_dir.join(format!("{base}.sha256"));
@@ -544,7 +552,7 @@ mod tests {
         assert_eq!(v["layout"]["firmware"].as_str().unwrap(), "seabios");
     }
 
-                                                                                                        
+                                                                                                         
     /// for UEFI, vps-kvm for both BIOS firmwares.
     #[test]
     fn layout_carries_the_substrate_line() {

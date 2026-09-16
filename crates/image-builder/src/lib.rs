@@ -1,13 +1,13 @@
 //! Operator-side image builder: fetch + verify + extract pinned Alpine apks, behind a
-                                                                                         
-                                                                                    
+//! source-agnostic acquisition seam (Plan 3.4v2 Task 1.2). Host-side (x86_64-gnu); NOT in
+                                                                                     
 //!
 //! The Alpine apk v2 format (empirically confirmed on a real 3.23 `musl` apk; the wiki
 //! Apk_spec is WIP, so the genuine apk is the authority): three concatenated gzip streams
 //! — signature segment ‖ control segment ‖ data tarball. Verification:
-                                                                                             
+                                                                                              
 //!   2. RSA PKCS#1 v1.5 signature (in the `.SIGN.RSA.<key>` record) over `sha1(control
-                                                                                                 
+                                                                                                  
 //!   3. `.PKGINFO` `datahash == sha256(data tarball)` — ties the data to the signed control.
 
 use std::collections::HashMap;
@@ -16,9 +16,12 @@ use std::path::Path;
 
 /// Custom-kernel build driver + the build-time CONFIG assertion (Task 1.3).
 pub mod kernel;
-                                                                                                   
+                                                                                                    
 /// bake's verify-at-consumption and orchard's `kernel_bump`.
 pub mod sources;
+
+/// Producer of the C4 gate's Kconfig-namespace fixture from the sha-verified pinned tarball.
+pub mod kconfig_namespace;
 
 /// IMA/EVM signing orchestration (Task 1.4): the file-signing scope + the evmctl differential-test oracle.
 pub mod ima_evm;
@@ -88,14 +91,14 @@ pub mod seed_agree;
 /// closure shape-lock (over the existing `Pins::check_drift` + `PinnedApks` machinery).
 pub mod store_checks;
 
-                                                                                                      
+                                                                                                       
 /// value without a `certifies-pin`/`superseded-by` marker or a file-level allowlist entry. Wired hot in
 /// Task 8 (after the operational-rule retrofit); the self-test runs against a synthetic fixture tree.
 pub mod cert_presence;
 
 /// `.img` assembly + layout (Task 2.3): pad-squashfs-to-4096 + concat
 /// `vmlinuz‖initramfs‖rootfs.verity` + the `.layout.toml` offset sidecar. Pure +
-                                                                            
+                                                                             
 pub mod image;
 
 /// Boot-fs `extlinux.conf` APPEND rendering + the O3 `rootfs-dev` byte-patch sentinel (installer
@@ -138,23 +141,23 @@ pub mod apk_drift;
 /// resolver seam. Verify-before-record provenance; the production container resolver lands separately.
 pub mod generate_lock;
 
-                                                                                                      
+                                                                                                       
 /// + required-fields (the §5.3 fail-closed discipline). The typed wire format both publish and consume
 /// agree on; Orchard verifies every consumed artifact's sha256 against it before baking.
 pub mod pin_manifest;
 
-                                                                                                  
+                                                                                                   
 /// handle is constructible only through a passing sha256 check, so un-verified bytes can't reach the
 /// bake. `DirStore` is the only backend now; a `ReleaseAssetsStore` is a designed-for future drop-in.
 pub mod artifact_store;
 
-                                                                                                   
+                                                                                                    
 /// consume-side counterpart to publish's source tarballs — fetch+verify (the artifact_store gate) then
 /// unpack into vendor/, which Orchard's Cargo.toml path-points at.
 pub mod vendor;
 
 /// Source-agnostic package acquisition seam (R1 sovereignty requirement, memory
-                                                                                          
+                                                                                           
 /// trait, so the upstream (Alpine today) stays a swappable provider. A provider fetches the
 /// pinned package, verifies provenance + immutability, and extracts its files into staging.
 /// Fails closed on any verification failure.
@@ -187,7 +190,7 @@ pub enum AcquireError {
 pub struct PinnedPackage {
     pub name: String,
     pub version: String,
-                                                                                   
+                                                                                    
     pub sha256: String,
     /// `<key_name>` of the Alpine signing key (matches a `<key_name>.rsa.pub` trust anchor).
     pub signing_key: String,
@@ -292,7 +295,7 @@ pub fn verify_apk(
     Ok(verified)
 }
 
-                                                                                               
+                                                                                                
 /// chain — against the trusted key set, returning the signer's `<key_name>` and the extractable
 /// payload. Unlike [`verify_apk`] this carries NO sha256 immutability pin: the lock generator
 /// (`deploy refresh-apk-lock`) verifies provenance and THEN records the computed sha256 (the pin
@@ -368,7 +371,7 @@ pub trait Fetcher {
     /// `Err` = not-found (e.g. HTTP 404, so the caller tries the next repo) or transport error.
     fn get(&self, url: &str) -> Result<Vec<u8>, String>;
 
-                                                                                                    
+                                                                                                     
     /// ADDITIVE: the default is a plain atomic [`Fetcher::get`] with ZERO ticks, so every existing
     /// impl (apk / musl / the test maps) is unchanged; only [`HttpFetcher`] overrides it to stream
     /// the body and tick from the response's `Content-Length`. `total` is a best-effort hint (the
@@ -680,7 +683,7 @@ fn rsa_pkcs1_sha1_verify(
 #[cfg(test)]
 mod internal_tests {
     //! Unit tests reaching private internals — the rejection paths the public-API
-                                                                          
+                                                                           
     use super::*;
 
     #[test]

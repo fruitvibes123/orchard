@@ -4,7 +4,7 @@
 //! ssh/scp/kexec `Command` argv builders, the per-target flock, the three-state signal-cancellation
 //! machine, and the `deploy_prod` flow that sequences the spec's steps 1-10.
 //!
-                                                                                                   
+                                                                                                    
 //! speaks `StrictHostKeyChecking=no` to an ephemeral localhost-forwarded QEMU guest): prod targets
 //! a REAL remote root over an untrusted network, so host keys are pinned via an explicit
 //! known-hosts file + `StrictHostKeyChecking=yes`, ambient config is cut (`-F /dev/null`,
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use crate::deploy::build_image::Firmware;
 
 /// Where the destructive ceremony stands when a cancellation signal (Ctrl-C / SIGTERM) lands —
-                                                                                               
+                                                                                                
 /// confirmed" are different worlds: in between, the target may already be rebooting into the
 /// installer, which READS the staged `.img` from the old root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +26,7 @@ pub enum CancelState {
     PreKexecSpawn,
     /// (b) The `kexec` subprocess is in flight — `-e` MAY have reached the target. Do NOT remove
     /// the staged `.img` (a racing rm would brick a SUCCESSFUL kexec mid-install — the
-                                                                                        
+                                                                                         
     /// console/reconnect".
     KexecInFlight,
     /// (c) `kexec -e` confirmed — past the point of no return; cancellation is a no-op.
@@ -38,7 +38,7 @@ pub fn should_remove_staged_img(state: CancelState) -> bool {
     matches!(state, CancelState::PreKexecSpawn)
 }
 
-                                                                                                
+                                                                                                 
 /// trivially-different spellings of the same target collide on the same lock, then reduce to
 /// filename-safe bytes (`[a-z0-9._-]`, everything else → `_`) because the key becomes the lock
 /// FILENAME. Sanitization collisions OVER-lock — the safe direction for a destructive ceremony.
@@ -69,7 +69,13 @@ pub struct DeployLock {
     pub path: PathBuf,
 }
 
-                                                                                              
+/// The fixed host-global runtime dir for the per-target prod lock. A literal path, NOT
+                                                                                                   
+/// runs against the same ip under different `$TMPDIR` would not serialize. The per-target file under
+/// it (`recipes-deploy-<lock_key(ip)>.lock`) keys the lock to the resource it protects.
+pub const DEPLOY_LOCK_DIR: &str = "/tmp/recipes-deploy-locks";
+
+                                                                                               
 /// exclusive `flock` on `<runtime_dir>/recipes-deploy-<lock_key(ip)>.lock`. Fail-closed on a held
 /// lock with an operator-actionable message naming the target.
 pub fn acquire_deploy_lock(runtime_dir: &Path, ip: &str) -> Result<DeployLock, String> {
@@ -149,11 +155,51 @@ fn hardened_common_args(identity: &Path, known_hosts: &Path) -> Vec<String> {
 /// The caller appends the remote command as ONE trailing arg. `port` is the target's sshd port
 /// (22 in the real ceremony; a forwarded high port under the QEMU e2e harness — ssh uses `-p`).
 pub fn prod_ssh_args(ip: &str, identity: &Path, known_hosts: &Path, port: u16) -> Vec<String> {
+    prod_ssh_args_as(DEFAULT_RECONNECT_USER, ip, identity, known_hosts, port)
+}
+
+/// The post-install reconnect user: the box's own dropbear, where root IS ours and no cloud
+/// restriction exists. Also the user every non-ceremony verb (update, status, deploy-model,
+/// rotate-key) connects as — those all talk to an installed box.
+pub const DEFAULT_RECONNECT_USER: &str = "root";
+
+/// The PRE-KEXEC login user (guided-ceremony plan-inputs §Transport): the substrate's cloud user,
+/// which sudos the privileged steps. Infomaniak VPS images restrict the root key with a forced
+/// `command="…exit 142"` that returns after every reinstall
+/// (`cookbook/docs/vps-root-login-behavior.md`); connecting as the cloud user makes it
+/// irrelevant, permanently. Overridable per profile (`provisioning_user`) because clouds differ
+/// and a fixture whose provisioning login IS root sets it back to `root`.
+pub const DEFAULT_PROVISIONING_USER: &str = "debian";
+
+/// [`prod_ssh_args`] with an explicit login user.
+pub fn prod_ssh_args_as(
+    user: &str,
+    ip: &str,
+    identity: &Path,
+    known_hosts: &Path,
+    port: u16,
+) -> Vec<String> {
     let mut args = hardened_common_args(identity, known_hosts);
     args.push("-p".into());
     args.push(port.to_string());
-    args.push(format!("root@{ip}"));
+    args.push(format!("{user}@{ip}"));
     args
+}
+
+/// Wrap a remote command for a leg whose login user is NOT root: `sudo -n sh -c '<cmd>'` runs the
+/// same string under a root shell, so shell operators (`||`, pipes, redirects) keep exactly the
+/// semantics they had when the login shell itself was root's. `-n` fails instead of prompting, so
+/// a target without passwordless sudo refuses loudly rather than hanging on a password prompt.
+/// A `root` login is returned VERBATIM: root needs no sudo, and a minimal image may not ship it.
+///
+/// Single-quote escaping is the POSIX form (`'` → `'\''`): the composed commands already contain
+/// single quotes (the kexec `--append '…'` payload), and losing one would hand the remote shell a
+/// different command line than the composer validated.
+pub fn privileged_remote(user: &str, cmd: &str) -> String {
+    if user == DEFAULT_RECONNECT_USER {
+        return cmd.to_string();
+    }
+    format!("sudo -n sh -c '{}'", cmd.replace('\'', "'\\''"))
 }
 
 /// Hardened scp argv staging `local` to `root@<ip>:<remote_path>` under the same pinned host-key +
@@ -257,7 +303,7 @@ pub struct LayoutInfo {
 }
 
 /// The local build artifacts the ceremony stages, read ONCE up front. The `.img` itself is NEVER
-                                                                                                    
+                                                                                                     
 /// the digest is chunked, and only BOUNDED regions (boot for the identity replay, rootfs data for
 /// the verity recompute) are ever read.
 pub struct ImageArtifacts {
@@ -266,12 +312,12 @@ pub struct ImageArtifacts {
     pub vmlinuz: Vec<u8>,
     pub initramfs: Vec<u8>,
     pub layout: LayoutInfo,
-                                                                                                
+                                                                                                 
     pub img_sha_sidecar: String,
-                                                                                 
+                                                                                  
     pub vmlinuz_sha_sidecar: String,
     pub initramfs_sha_sidecar: String,
-                                                                                               
+                                                                                                
     /// pre-sidecar image ⇒ fail closed (rebuild).
     pub operator_pubkey_fpr_sidecar: Option<String>,
     /// Local paths (scp sources) + their on-target file names.
@@ -312,11 +358,11 @@ pub trait OrchestrationOps {
     fn cancel_requested(&self) -> bool;
     fn sleep_secs(&mut self, secs: u64);
     fn now_epoch(&self) -> i64;
-                                                                                             
+                                                                                              
     /// operator sees the exact endpoint they are authorizing. Read-only.
     fn ssh_port(&self) -> u16;
     /// Does the operator's AMBIENT `~/.ssh/known_hosts` hold a DIFFERENT key for `ip` than
-                                                                                                
+                                                                                                 
     /// advisory, NEVER edits known_hosts (the ceremony's hardened legs keep `-F /dev/null`). Default
     /// `None` so wrappers + the mock stay quiet unless a real conflict is present.
     fn ambient_known_hosts_conflict(
@@ -376,10 +422,10 @@ pub trait OrchestrationOps {
         disk: &str,
         offset: u64,
     ) -> Result<[u8; 32], String>;
-                                                                                                  
+                                                                                                   
     /// `kexec -e` — the POINT OF NO RETURN, takes the wipe token BY VALUE (the structural
-                                                                                            
-                                                                                              
+                                                                                             
+                                                                                               
     /// connection is `Ok` (the target is rebooting into the installer).
     fn fire_kexec(&mut self, token: WipeConfirmed) -> Result<(), String>;
 }
@@ -388,7 +434,7 @@ pub trait OrchestrationOps {
 /// identities + known-hosts paths live in the [`OrchestrationOps`] implementation).
 pub struct DeployProdOpts {
     pub ip: String,
-                                                                                               
+                                                                                                
     pub pubkey: std::path::PathBuf,
     /// The resolved local `.img` (sidecars + vmlinuz/initramfs beside it).
     pub image: std::path::PathBuf,
@@ -419,8 +465,8 @@ pub struct DeployProdOpts {
     /// The profile schema keys whose values came from a `--profile` (Component 5). Display-only: the
     /// C1 pre-wipe summary annotates these values `(profile)`. Empty when no profile was used.
     pub profile_sourced: std::collections::HashSet<String>,
-                                                                                                
-                                                                                                
+    /// D-2 reclaim-tail (spec 2026-07-28-reclaim-tail-design v19): `--reclaim-tail`. The flag is
+                                                                                                 
     /// imply it.
     pub reclaim_tail: bool,
     /// §5.8: operator override of the reclaim reboot-poll bound (default 1800 s).
@@ -610,7 +656,7 @@ fn local_boot_fs_identity_hash(
 }
 
 /// The operator advisory printed on the destructive path BEFORE the wipe gate (acceptance #7 /
-                                                                                          
+                                                                                           
 pub const DESTRUCTIVE_ADVISORY: &str = "\
 ADVISORY — read before confirming:
   * STAGING BEGINS RAW WRITES TO THE TARGET DISK. Confirming starts streaming the image onto a
@@ -628,7 +674,7 @@ ADVISORY — read before confirming:
 
 /// Free-space headroom over the staged artifact bytes (journal/metadata slack on the stage fs).
 pub(crate) const STAGE_HEADROOM_BYTES: u64 = 64 * 1024 * 1024;
-                                                                                             
+                                                                                              
 const MAX_CLOCK_SKEW_SECS: i64 = 60;
 
 /// The standing note appended to every reclaim-region failure. R6→R13 treadmilled on computing,
@@ -638,12 +684,12 @@ const MAX_CLOCK_SKEW_SECS: i64 = 60;
 /// growroot purge → fstab strip; `reclaim/neutralize.rs`, enumerated by `ceremony_census_tests.rs`),
 /// so a refusal inside the sequence leaves a PREFIX applied and the rest not. The note names the
 /// SET they are drawn from ("any of"); it never asserts the conjunction as accomplished (R13
-                                                                                                      
+                                                                                                       
 /// the hook is still armed, and whether the shrink/repartition/reboot completed — are NOT here: they
 /// live in the per-arm renderers, each keyed on the STRUCTURAL BOUNDARY that establishes it
 /// (`disarm()`'s outcome for the armed fact; `arbitrate`-Ok for the completed-reclaim fact, R13
-                                                                                               
-                                                                                            
+                                                                                                
+                                                                                             
 /// `update-initramfs` rebuild). Decision record 2026-08-11-reclaim-tail-disclosure-simplification
 /// (re-cut 2026-08-11 for the R12 and R13 folds).
 pub(crate) const RECLAIM_STANDING_NOTE: &str = "if any reclaim step reached this target it may carry \
@@ -656,17 +702,17 @@ pub(crate) const RECLAIM_STANDING_NOTE: &str = "if any reclaim step reached this
 /// [`RECLAIM_STANDING_NOTE`]. Threaded through every reclaim-region renderer and helper so the note
 /// cannot be produced except through that one function: a new note-dropping emitter cannot yield
 /// operator text without routing through `reclaim_abort_text`. The type makes that a COMPILE-TIME
-                                                                  
+                                                                   
 /// `reclaim_abort_text_call_sites_are_the_floored_set` failed open on a point-free / aliased / second
 /// call). Consumed at the `deploy_prod` / `reclaim_tail_standalone` boundary by
 /// [`ReclaimAbort::into_message`]. Accepted residual: a bare `return Err("…".to_string())` written
 /// DIRECTLY in `deploy_prod`'s or `reclaim_tail_standalone`'s reclaim block still type-checks (both
 /// entry points return `Result<(), String>`) — a visible anti-pattern in review, not the invisible
-                                                                                          
+                                                                                           
 /// `plan_and_consent` returned `Result<_, String>` too (mutations M-A / M-B, a new note-dropping
 /// refusal in either compiled), so the lock was NOT yet total; both now return `ReclaimAbort`,
 /// leaving the two entry points as the exact residual. The lock rests on the TYPE alone (R15
-                                                                                                 
+                                                                                                  
 /// whole margin over the type was this same declared residual): a bare String refusal in a typed
 /// fn is E0308, and a `String`-error helper called with `?` from one is E0277, because no
 /// `From<String>` impl exists for `ReclaimAbort` — and none may be added; it would open a silent
@@ -682,7 +728,7 @@ impl ReclaimAbort {
     }
 }
 
-                                                                                                   
+                                                                                                    
 /// rendered operator text leaves the newtype ONLY via `into_message`; the derived Debug would honour
 /// `format!("{:?}", …)` and wrap the raw message as `ReclaimAbort("…")`, an out-of-module
 /// stringification path the enforcement doc did not enumerate. This shows the type, not the message,
@@ -695,11 +741,11 @@ impl std::fmt::Debug for ReclaimAbort {
 
 /// The ONE renderer for reclaim-region failure text: it appends [`RECLAIM_STANDING_NOTE`]
 /// unconditionally, so no call site computes what to disclose. `detail` renders any `ReclaimRefusal`
-                                                                                                      
+                                                                                                       
 /// Returns a [`ReclaimAbort`] — a newtype constructible ONLY here — so the standing note cannot be
 /// produced anywhere else; a new reclaim-region emitter must route through this function to yield
-                                                                                                     
-                                                                                          
+                                                                                                      
+                                                                                           
 pub(crate) fn reclaim_abort_text(detail: impl Into<String>) -> ReclaimAbort {
     ReclaimAbort(format!("{}\n({RECLAIM_STANDING_NOTE})", detail.into()))
 }
@@ -707,7 +753,7 @@ pub(crate) fn reclaim_abort_text(detail: impl Into<String>) -> ReclaimAbort {
 /// The completed-reclaim disclosure clause. Rendered by the per-arm renderers when the failure is
 /// past `arbitrate`-Ok (the shrink, repartition and reboot are durable). Held as one const so the
 /// fact attaches at the structural boundary that establishes it, never re-typed per arm (R13
-            
+             
 const COMPLETED_RECLAIM_CLAUSE: &str = "the RECLAIM HAS RUN: the target's root filesystem was \
     shrunk, its partition repartitioned, and the target rebooted";
 
@@ -715,8 +761,8 @@ const COMPLETED_RECLAIM_CLAUSE: &str = "the RECLAIM HAS RUN: the target's root f
 /// runs its prior system. Held as one const and interpolated at each output arm of the staging
 /// closure (`reclaim_done`, `reclaim_ro`, bare), exactly once per path, never re-typed per arm —
 /// the same "carry the fact from the boundary that establishes it" move as [`COMPLETED_RECLAIM_CLAUSE`]
-                                                                                                 
-                                                            
+                                                                                                  
+                                                             
 const NO_KEXEC_OCCURRED_CLAUSE: &str = "the box still runs its prior system — no kexec occurred";
 
 /// A failure at or after the hook write: the target may still be armed. NOT a `String` on purpose:
@@ -729,20 +775,20 @@ const NO_KEXEC_OCCURRED_CLAUSE: &str = "the box still runs its prior system — 
 /// error" claim was true only module-scoped).
 /// `reclaim_completed` records whether the failure is past `arbitrate`-Ok (the shrink completed); it
 /// is set ONCE at that boundary by [`ArmedFailure::mark_completed`], and the renderers append
-                                                                                              
+                                                                                               
 pub(crate) struct ArmedFailure {
     text: String,
     reclaim_completed: bool,
-                                                                                                  
+                                                                                                   
     /// so a post-reboot failure is not classified as a pre-reboot initramfs failure. Set at
     /// construction — a `&'static str` from `reclaim::rows`, the same "carry the non-monotone fact
     /// from the boundary that establishes it" move as `reclaim_completed`. `text` is the bare reason
-                                                                                                   
+                                                                                                    
     /// nested-row double-prefix on the refusal-derived arms).
     row: &'static str,
 }
 
-                                                                                                   
+                                                                                                    
 /// refusal text leaves an `ArmedFailure` ONLY via `armed_abort` / `completion_disarm_abort`; the
 /// derived Debug was a third out-of-module stringification path (beside `Display`/`From`, which do
 /// not exist). Shows the completion flag and a redaction marker, not the raw text.
@@ -760,7 +806,7 @@ impl std::fmt::Debug for ArmedFailure {
 
 impl ArmedFailure {
     /// The failure is NOT known to be past the shrink (pre-`arbitrate` arms, install-time arms).
-                                                                 
+                                                                  
     pub(crate) fn new(row: &'static str, text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
@@ -784,12 +830,12 @@ impl ArmedFailure {
     }
     /// Read access for TEST assertions only — `#[cfg(test)]` so the doc claim above stays true:
     /// production code cannot stringify an `ArmedFailure` except through [`armed_abort`] or
-                                                           
+                                                            
     #[cfg(test)]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
-                                                                                                          
+                                                                                                           
     /// `armed_abort`/`completion_disarm_abort` render it; a test that drives `reboot_and_arbitrate`
     /// directly asserts the value here rather than on the bare `text`.
     #[cfg(test)]
@@ -802,7 +848,7 @@ impl ArmedFailure {
 /// subprocess exists the operator can abort freely; `staged` carries the on-target paths to
 /// best-effort remove (bounded by the ssh ConnectTimeout). After [`OrchestrationOps::fire_kexec`]
 /// the flow never calls this again (PastNoReturn — see [`CancelState`]). Deliberately NOTE-FREE
-                                                                                                   
+                                                                                                    
 /// so a reclaim disclosure here would fire on targets no reclaim step ever reached. The reclaim
 /// region's own cancel points are structurally separate — the two pre-write points call
 /// `reclaim::ceremony::reclaim_cancel_check` (which appends the note), and a post-reclaim cancel
@@ -820,10 +866,10 @@ fn cancel_check(ops: &mut dyn OrchestrationOps, staged: Option<&[String]>) -> Re
     Err("cancelled by operator signal BEFORE kexec (staged files best-effort removed)".to_string())
 }
 
-                                                                                                   
-/// reclaim hook — there is no hook file to remove, so no cleanup command is issued. Renders the
                                                                                                     
-                                                                                                      
+/// reclaim hook — there is no hook file to remove, so no cleanup command is issued. Renders the
+                                                                                                     
+                                                                                                       
 pub(crate) fn no_disarm_outcome(r: crate::deploy::reclaim::ReclaimRefusal) -> ReclaimAbort {
     reclaim_abort_text(format!(
         "{r}\n(this run wrote no reclaim hook, so no cleanup ran; if an earlier run left the \
@@ -831,11 +877,11 @@ pub(crate) fn no_disarm_outcome(r: crate::deploy::reclaim::ReclaimRefusal) -> Re
     ))
 }
 
-                                                                                               
+                                                                                                
 /// failure came at or after the hook write, so the hook (and possibly the premount script + a
 /// rebuilt initrd) may be on the target, and the disarm always runs — a `BeforeInstall` refusal
-                                                                                              
-                                                                                                     
+                                                                                               
+                                                                                                      
 /// `reclaim_abort_text` appends the standing note.
 pub(crate) fn append_disarm_outcome(
     ops: &mut dyn OrchestrationOps,
@@ -867,8 +913,8 @@ pub(crate) fn append_disarm_outcome(
 /// past `reboot_and_arbitrate`'s Ok, so the shrink, the repartition and the reboot are done — but
 /// the disarm could not verify): the ONLY other consumer of an [`ArmedFailure`] besides
 /// [`armed_abort`] — the disarm already ran (and failed), so no second attempt. The wrapper states
-                                                                                                  
-                                                                                                    
+                                                                                                   
+                                                                                                     
 /// refusal texts carry their own. `reclaim_abort_text` appends the standing note.
 pub(crate) fn completion_disarm_abort(de: ArmedFailure) -> ReclaimAbort {
                                                                                                 
@@ -889,12 +935,12 @@ pub(crate) fn completion_disarm_abort(de: ArmedFailure) -> ReclaimAbort {
 /// Route an `install_and_arm` failure to its operator outcome — the SINGLE routing site both callers
 /// (`deploy_prod`, `reclaim_tail_standalone`) share, so the variant→consequence decision cannot drift
 /// between them (R8 M2/M2b were exactly that two-site drift class). `BeforeInstall` wrote no hook this
-                                                                                                       
-                                                                                                  
+                                                                                                        
+                                                                                                   
 /// fail-closed guard: a new `InstallFailure` variant is a compile error here until it is routed. Each
 /// arm's consequence is asserted end-to-end by driving the real entry points
 /// (`prod_orchestrate_reclaim_tests.rs`), never by re-implementing this match
-                                                      
+                                                       
 pub(crate) fn route_install_failure(
     ops: &mut dyn OrchestrationOps,
     e: crate::deploy::reclaim::ceremony::InstallFailure,
@@ -910,11 +956,11 @@ pub(crate) fn route_install_failure(
     }
 }
 
-                                                                                                
-                                                                                                     
+                                                                                                 
+                                                                                                      
 /// so the hook may be on the target and the disarm must run. `reboot_and_arbitrate` and
 /// `disarm_reachable` RETURN [`ArmedFailure`] (never `String`), so a present or future call site
-                                                                                                
+                                                                                                 
 /// staging/kexec wrap constructs its `ArmedFailure` at the one `reclaim_done` gate. Each call site
 /// is still floored by a test that drives its real entry point.
 pub(crate) fn armed_abort(ops: &mut dyn OrchestrationOps, e: ArmedFailure) -> ReclaimAbort {
@@ -949,7 +995,7 @@ fn layout_firmware_token(layout_text: &str) -> Option<String> {
 }
 
 /// The deploy-prod firmware ALLOWLIST decision, extracted as a pure predicate so BOTH directions
-                                                                                          
+                                                                                           
 /// kexec-takeover ceremony installs a `seabios` (MBR) OR a `seabios-gpt` (GPT) image; it fail-closes on
 /// `uefi` (its own signed-USB substrate ceremony) and on an absent/garbled firmware line. An ALLOWLIST,
 /// never a blocklist — a future firmware token is refused by default, not silently accepted. The caller
@@ -973,7 +1019,7 @@ fn firmware_deploy_eligible(token: Option<&str>) -> Result<Firmware, String> {
 
 /// Verify the local artifact set against its build-emitted sidecars (spec step 1): the `.img`,
 /// vmlinuz, and initramfs bytes each match their `.sha256` sidecar, and the image's baked
-                                                                                                 
+                                                                                                  
 /// key mismatch aborts BEFORE anything touches the target.
 fn preflight_artifacts(
     ops: &mut dyn OrchestrationOps,
@@ -1029,7 +1075,7 @@ fn preflight_artifacts(
 }
 
 /// The step-9 reconnect wait: poll the box's dropbear until it answers or the wall-clock deadline,
-                                                                                                   
+                                                                                                    
 /// this post-kexec path — well after every abort window — so the fail-closed mock asserts are
 /// undisturbed. Extracted from `deploy_prod` so it is unit-testable with a mock clock.
 fn reconnect_wait(ops: &mut dyn OrchestrationOps, timeout_secs: u64) -> Result<(), String> {
@@ -1075,7 +1121,7 @@ fn reconnect_wait(ops: &mut dyn OrchestrationOps, timeout_secs: u64) -> Result<(
     }
 }
 
-                                                                                                 
+                                                                                                  
 /// decision the operator authorizes, `say()`d just before the wipe confirmation. Values a profile
 /// supplied (Component 5) are annotated `(profile)` — the set is threaded from the merge (empty until
 /// C5 wires it). Pure + testable; the confirmation prompt itself is unchanged.
@@ -1144,7 +1190,7 @@ fn render_pre_wipe_summary(
 }
 
 /// Find a `known_hosts` line that CONFLICTS with the presented key for `ip`: same host, SAME
-                                                                                                   
+                                                                                                    
 /// same host is NOT a conflict — `ssh-keyscan <ip>` (no `-t`) writes one line per algorithm, so an
 /// IP-only compare would false-fire the advisory on an unchanged host. Hashed (`|1|`) / comment
 /// lines are skipped (can't be matched to a plaintext ip). Pure over the file content — the testable
@@ -1182,7 +1228,7 @@ fn known_hosts_conflict_in(
     None
 }
 
-                                                                                                  
+                                                                                                   
 /// own `~/.ssh/known_hosts` holds a DIFFERENT key of the SAME keytype for `ip` than the provisioning
 /// host presented (a panel reinstall, not MITM). Advisory only — never edits known_hosts.
 fn maybe_known_hosts_advisory(
@@ -1200,7 +1246,7 @@ fn maybe_known_hosts_advisory(
     ))
 }
 
-                                                                                                 
+                                                                                                  
 /// that the next plain `ssh` will warn host-key-CHANGED (the INSTALL, not a MITM), and the cleanup.
 fn completion_message(ip: &str, runtime_fpr: &str) -> String {
     format!(

@@ -23,7 +23,7 @@
 //! boots the installed disk through the REAL chain (MBR → VBR → ldlinux → kernel) to a working runtime
 //! — dropbear accepts the OPERATOR pubkey, recipes serves, `/` is ro (verity), `/proc/cmdline` carries
 //! the byte-patched `fb.rootfs-dev=/dev/vda2`, persist resize2fs-filled its partition — AND a disk
-                                                                                                              
+                                                                                                               
 //! empirical close for the installer.
 //!
 //! ASSERTED (persist-crash-recovery): `install_disk_and_verify` syncs `/persist` then re-boots the
@@ -31,7 +31,7 @@
 //! (journal-replay via `prepare-persist`'s `e2fsck -p`, then the journal-gated grow skips resize2fs) to
 //! SERVICES with recipes serving 303 — acceptance #1, **Case B (a crash of a PROVISIONED box)**. The
 //! mid-first-boot-provisioning empty-file case (recipes/haproxy choke on a 0-byte cookie.key / ca.crt) is
-                                                                                                 
+                                                                                                  
 //! corruption→rescue path is acceptance #3b (`boot_rc4_corrupt_persist_and_verify`).
 //!
 //! ALSO ASSERTED (phase-4 holistic M-β): `clean_reboot_and_verify` then exercises the CLEAN-reboot leg —
@@ -62,11 +62,20 @@ fn installed_disk_boots_through_seabios_to_working_runtime() {
         Path::new(&img),
         Path::new(&privkey),
         orchard::deploy::build_image::Firmware::Seabios,
-        &orchard::deploy::dryrun::DryrunOpts::default(),
+                                                                                               
+        &orchard::ceremony::leg_registry::installed_disk_opts(),
     )
     .expect(
         "greenfield install + SeaBIOS disk-boot should reach a working runtime + hold bootable-last",
     );
+                                                                                                  
+                                                                                                 
+                                                               
+    orchard::ceremony::gate_record::emit_leg_pass(
+        Path::new(&img),
+        "installed_disk_boots_through_seabios_to_working_runtime",
+    )
+    .expect("emit this leg's gate-record row");
 }
 
                                                                                                           

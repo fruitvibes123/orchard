@@ -1,0 +1,14 @@
+# A 2026-07 deploy profile, byte-frozen as the compatibility fixture: the C4 schema
+# extension must keep every pre-extension profile parsing with unchanged meanings.
+ip = "203.0.113.5"
+port = 2222
+domain = "box.example.com"
+net = "mode=static;ip=10.0.2.15/24;gw=10.0.2.2;dns=10.0.2.3"
+operator_pubkey = "/home/op/.ssh/box.pub"
+recovery_pubkey = "/home/op/.ssh/rescue.pub"
+ssh_identity = "/home/op/.ssh/vps_initial_access"
+box_login_identity = "/home/op/.ssh/box"
+host_fingerprint = "SHA256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefa"
+runtime_hostkey_fingerprint = "SHA256:0123456789012345678901234567890123456789012"
+keys_dir = "/home/op/.config/recipes-deploy/keys"
+out_dir = "/tmp/box-images"

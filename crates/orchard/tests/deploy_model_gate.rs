@@ -4,7 +4,7 @@
 //! `#[ignore]` + env-gated: under the default `cargo test` these report "ignored" (honest); under
 //! `--ignored` (via `make boot-gate-hotswap`) a MISSING env PANICS rather than silent-passing — so
 //! there is no invocation in which a hotswap gate reports success without asserting the produced
-                                             
+                                              
 //!
 //! The `.img` is a `--firmware seabios-gpt --weights-anchor runtime --manifest
 //! crates/image-builder/hotswap-tenant.toml` build (the models.toml-pinned GGUF baked as the
@@ -14,7 +14,7 @@
 //!   orchard generate-keys --artifact-signing --out <keys>   # or reuse a set; then:
 //!   cp -r <keys> <keys-old>                                 # snapshot the OLDER Weights ctr
 //!   sleep 2 && orchard redelegate --purpose weights --keys-dir <keys>   # bump the ctr
-//!   RECIPES_DHA_WEIGHTS_GGUF=<models.toml-pinned gguf> cargo run -p orchard -- build \
+//!   cargo run -p orchard -- build --dha-weights-gguf <models.toml-pinned gguf> \
 //!     --firmware seabios-gpt --weights-anchor runtime --domain hotswap.test \
 //!     --manifest crates/image-builder/hotswap-tenant.toml --keys-dir <keys> \
 //!     --operator-pubkey <ssh>.pub --recovery-pubkey <ssh>.pub \
@@ -62,11 +62,11 @@ fn hotswap_env() -> HotswapGateEnv {
     }
 }
 
-                                                                                               
                                                                                                 
-                                                                                               
+                                                                                                 
+                                                                                                
 /// `deploy-model` ceremony commits a different model, uptime-continuous, health-inference-gated) +
-                                                                                             
+                                                                                              
 /// Rider 3 (a clean reboot serves the PUSHED model from the persisted record).
 #[test]
 #[ignore = "boot gate: needs RECIPES_HOTSWAP_* env + /dev/kvm + docker; run via `make boot-gate-hotswap`"]
@@ -76,9 +76,9 @@ fn hotswap_box_swaps_models_without_reboot_and_persists() {
         .expect("the v4 box must run the whole swap battery (2/3a/4/5/6/8/9/11 + Rider 3)");
 }
 
+                                                                                                    
                                                                                                    
-                                                                                                  
-                                                                                               
+                                                                                                
 /// the engine down, never rescue/brick).
 #[test]
 #[ignore = "boot gate: needs RECIPES_HOTSWAP_* env + /dev/kvm + docker; run via `make boot-gate-hotswap`"]

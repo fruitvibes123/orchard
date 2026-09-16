@@ -3,6 +3,7 @@ members = [
     "crates/image-builder",
     "crates/syslinux-install",
     "crates/orchard",
+    "crates/orchard-shim",
     "crates/grocer",
     "crates/cashew",
 ]

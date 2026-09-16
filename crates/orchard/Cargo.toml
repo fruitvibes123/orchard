@@ -1,6 +1,6 @@
 [package]
 name = "orchard"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "GPL-2.0-only"
 
@@ -77,3 +77,22 @@ libc = "0.2"
 # Test-only: build APKINDEX.tar.gz fixtures for the `market outdated` fake fetcher (both already
 flate2 = "1"
 tar = "0.4"
+
+# Test-only: the deploy import census lexes ceremony sources (D-R12-4 MECHANIZE rung). Already in
+# Cargo.lock at this exact version via the proc-macro stack; dev-deps sit outside
+# `cargo tree --edges normal`, the shipped-closure guard's scope.
+proc-macro2 = "=1.0.106"
+
+# Guided-ceremony seeded-violation fixtures (default OFF; `make ceremony-seeds` drives all
+# three expecting failure — a seed that does NOT redden its arm is the bug):
+#  - compose-yes: S6's compose additionally emits the consent alias `--yes` → the
+#    forbidden-composition arm reddens.
+#  - unclassified-flag: `build` gains `--ceremony-seed-unclassified` absent from flag_table →
+#    the flag-class totality arm reddens.
+#  - unclassified-verb: `OrchardCmd` gains a variant with NO verb_class arm → the build itself
+#    fails (compile-time totality; never #[cfg(test)] — an integration test links the lib without
+#    cfg(test)).
+[features]
+ceremony-seed-compose-yes = []
+ceremony-seed-unclassified-flag = []
+ceremony-seed-unclassified-verb = []

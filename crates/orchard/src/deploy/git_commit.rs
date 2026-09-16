@@ -3,9 +3,9 @@
 //! Three pieces, each independently testable:
 //! - [`GitCommit`] — the git seam. Production [`ShellGit`] stages and commits PATHSPEC-SCOPED
 //!   (`git -C <repo> add -- <paths>` then `git -C <repo> commit -F <msgfile> -- <paths>`), so a
-                                                                                           
+                                                                                            
 //!   message goes through a temp file, never a shell line (backtick-safe).
-                                                                                                
+                                                                                                 
 //!   IFF under `orchard_root`; a path under a known sibling repo root is PRINTED (its ready
 //!   `git -C … commit` command); everything else — store blobs, the cert trail, any unmatched
 //!   root — is EXCLUDED from both. Longest-prefix over LEXICALLY NORMALIZED paths: layout roots
@@ -25,9 +25,22 @@ use std::process::Command;
 
 use super::market_exec::{StoreLayout, normalize};
 
+/// Commit-seam options. `no_verify` passes `--no-verify` (pre-commit and commit-msg are bypassed).
+/// Market's seam; the ceremony commits through `ceremony::gate_commit` instead.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CommitOpts {
+    pub no_verify: bool,
+}
+
 /// The commit seam: production = [`ShellGit`]; tests use a recording fake.
 pub trait GitCommit {
-    fn commit(&self, repo: &Path, paths: &[PathBuf], message: &str) -> Result<(), GitError>;
+    fn commit(
+        &self,
+        repo: &Path,
+        paths: &[PathBuf],
+        message: &str,
+        opts: CommitOpts,
+    ) -> Result<(), GitError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -76,7 +89,13 @@ impl ShellGit {
 }
 
 impl GitCommit for ShellGit {
-    fn commit(&self, repo: &Path, paths: &[PathBuf], message: &str) -> Result<(), GitError> {
+    fn commit(
+        &self,
+        repo: &Path,
+        paths: &[PathBuf],
+        message: &str,
+        opts: CommitOpts,
+    ) -> Result<(), GitError> {
                                                                                                 
                                                                               
         let mut msgfile = tempfile::NamedTempFile::new()?;
@@ -87,12 +106,11 @@ impl GitCommit for ShellGit {
         add_args.extend(paths.iter().map(|p| p.as_os_str()));
         Self::run(repo, "add", &add_args)?;
 
-        let mut commit_args: Vec<&std::ffi::OsStr> = vec![
-            "commit".as_ref(),
-            "-F".as_ref(),
-            msgfile.path().as_os_str(),
-            "--".as_ref(),
-        ];
+        let mut commit_args: Vec<&std::ffi::OsStr> = vec!["commit".as_ref()];
+        if opts.no_verify {
+            commit_args.push("--no-verify".as_ref());
+        }
+        commit_args.extend(["-F".as_ref(), msgfile.path().as_os_str(), "--".as_ref()]);
         commit_args.extend(paths.iter().map(|p| p.as_os_str()));
         Self::run(repo, "commit", &commit_args)
     }
@@ -112,7 +130,7 @@ pub enum Bucket {
 }
 
 /// Classify one swapped path against the layout's known roots — longest NORMALIZED prefix wins,
-                                                                   
+                                                                    
 pub fn bucket_of(path: &Path, layout: &StoreLayout) -> Bucket {
     let p = normalize(path);
                                                                                               
@@ -192,7 +210,7 @@ pub enum Consent {
     PrintOnly,
 }
 
-                                                                                           
+                                                                                            
 /// consent): `--no-commit`/`--dry-run` → PrintOnly (explicit opt-out beats even `--commit`);
 /// `--commit`/`--yes` → Commit (any TTY state — the operator/CI asked by flag); interactive TTY →
 /// the caller's prompt decides (`y`→Commit, `e`→EditThenCommit, anything else→PrintOnly, default
@@ -217,7 +235,7 @@ pub fn consent_from(flags: &UpgradeFlags, is_tty: bool, prompt: impl FnOnce() ->
 
                                                                                                  
 /// sha deltas read from git-HEAD-vs-on-disk of `orchard_paths` — NEVER from the advisory drift
-                                                                                          
+                                                                                           
 /// unparsable/undiffable file degrades to its basename in the subject — composing a message can
 /// never block the (already-swapped, already-verified) upgrade.
 pub fn compose_message(
@@ -396,9 +414,14 @@ fn toml_string_leaf_deltas(old: &str, new: &str) -> Option<Vec<String>> {
 pub fn diff_stat(repo: &Path, paths: &[PathBuf]) -> Option<String> {
     let mut args: Vec<&std::ffi::OsStr> = vec!["diff".as_ref(), "--stat".as_ref(), "--".as_ref()];
     args.extend(paths.iter().map(|p| p.as_os_str()));
+                                                                                                    
+                                                                                                   
+                                            
     let out = Command::new("git")
         .arg("-C")
         .arg(repo)
+        .arg("-c")
+        .arg("diff.autoRefreshIndex=false")
         .args(&args)
         .output()
         .ok()?;
@@ -409,32 +432,47 @@ pub fn diff_stat(repo: &Path, paths: &[PathBuf]) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
-/// Run `editor` on `initial` (via a temp file) and return the edited message. `None` = the edit
-/// ABORTED (no editor configured, spawn failure, non-zero exit, or an empty-after-trim result) —
-/// the caller falls to the print-only path, never to an un-consented default commit
-                                                                                            
-/// testability.
-pub fn edit_message_with(editor: Option<&std::ffi::OsStr>, initial: &str) -> Option<String> {
-    let editor = editor?;
+/// The outcome of an interactive message edit. `Aborted` carries the four abort gestures (no
+/// editor configured, spawn failure, non-zero exit, empty-after-trim) as one typed value both
+                                                                                                   
+                       
+#[derive(Debug, PartialEq, Eq)]
+pub enum EditOutcome {
+    Edited(String),
+    Aborted,
+}
+
+/// Run `editor` on `initial` (via a temp file). The `$EDITOR` read lives in the CLI; this takes it
+/// as a parameter for testability.
+pub fn edit_message_with(editor: Option<&std::ffi::OsStr>, initial: &str) -> EditOutcome {
+    let Some(editor) = editor else {
+        return EditOutcome::Aborted;
+    };
     if editor.is_empty() {
-        return None;
+        return EditOutcome::Aborted;
     }
-    let mut f = tempfile::NamedTempFile::new().ok()?;
-    f.write_all(initial.as_bytes()).ok()?;
-    f.flush().ok()?;
+    let Ok(mut f) = tempfile::NamedTempFile::new() else {
+        return EditOutcome::Aborted;
+    };
+    if f.write_all(initial.as_bytes()).is_err() || f.flush().is_err() {
+        return EditOutcome::Aborted;
+    }
+                                                                                                  
                                                                                                
-                                                                                              
-                           
-    let status = Command::new(editor).arg(f.path()).status().ok()?;
+    let Ok(status) = Command::new(editor).arg(f.path()).status() else {
+        return EditOutcome::Aborted;
+    };
     if !status.success() {
-        return None;
+        return EditOutcome::Aborted;
     }
-    let edited = std::fs::read_to_string(f.path()).ok()?;
+    let Ok(edited) = std::fs::read_to_string(f.path()) else {
+        return EditOutcome::Aborted;
+    };
     let trimmed = edited.trim();
     if trimmed.is_empty() {
-        None
+        EditOutcome::Aborted
     } else {
-        Some(trimmed.to_string())
+        EditOutcome::Edited(trimmed.to_string())
     }
 }
 
@@ -463,7 +501,8 @@ mod tests {
     fn layout() -> StoreLayout {
         let orchard = PathBuf::from("/eco/orchard");
         StoreLayout {
-            store: orchard.join("../artifact-store"),
+            store: crate::deploy::context::store_default(&orchard),
+            repo_manifest: crate::deploy::context::manifest_default(&orchard),
             repos: BTreeMap::from([
                 ("fruit-basket".to_string(), orchard.join("../fruit-basket")),
                 ("recipes".to_string(), orchard.join("../../recipes")),
@@ -532,6 +571,7 @@ mod tests {
         let orchard = PathBuf::from("/eco/orchard");
         let l = StoreLayout {
             store: orchard.join("local-store"),
+            repo_manifest: crate::deploy::context::manifest_default(&orchard),
             repos: BTreeMap::new(),
             cert_trail: None,
             orchard_root: orchard,
@@ -635,7 +675,12 @@ mod tests {
 
         let msg = "pin(apks): re-pin — `linux-virt` 6.18.36-r0\u{2192}6.18.38-r0";
         ShellGit
-            .commit(repo.path(), &[repo.path().join("consume-pins.toml")], msg)
+            .commit(
+                repo.path(),
+                &[repo.path().join("consume-pins.toml")],
+                msg,
+                CommitOpts::default(),
+            )
             .unwrap();
 
         let files = git_stdout(repo.path(), &["show", "--name-only", "--format=", "HEAD"]);
@@ -652,12 +697,61 @@ mod tests {
         assert_eq!(logged.trim_end(), msg);
     }
 
+                                                                                                
+    /// directions are read from real git — a hook that exits 1 refuses the `false` call, and the
+    /// `true` call commits over the same live hook. Measured on git 2.55.0.
+    #[test]
+    fn shell_git_runs_the_hosts_hooks_unless_no_verify_is_set() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let repo = test_repo();
+        let hook = repo.path().join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let target = repo.path().join("consume-pins.toml");
+
+        std::fs::write(&target, "pin = \"one\"\n").unwrap();
+        let err = ShellGit
+            .commit(
+                repo.path(),
+                std::slice::from_ref(&target),
+                "hooked",
+                CommitOpts::default(),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, GitError::Command { op, .. } if *op == "commit"),
+            "the hook's refusal surfaces as the commit step's error: {err}"
+        );
+        let head_before = git_stdout(repo.path(), &["rev-parse", "HEAD"]);
+
+        ShellGit
+            .commit(
+                repo.path(),
+                &[target],
+                "unhooked",
+                CommitOpts { no_verify: true },
+            )
+            .unwrap();
+        assert_ne!(
+            head_before,
+            git_stdout(repo.path(), &["rev-parse", "HEAD"]),
+            "the same commit lands once the hook is skipped"
+        );
+        let files = git_stdout(repo.path(), &["show", "--name-only", "--format=", "HEAD"]);
+        assert!(files.contains("consume-pins.toml"), "{files}");
+    }
+
     #[test]
     fn shell_git_fails_closed_outside_a_repo() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("x"), "y").unwrap();
         let err = ShellGit
-            .commit(dir.path(), &[dir.path().join("x")], "msg")
+            .commit(
+                dir.path(),
+                &[dir.path().join("x")],
+                "msg",
+                CommitOpts::default(),
+            )
             .unwrap_err();
         assert!(matches!(err, GitError::Command { .. }), "{err}");
     }
@@ -756,24 +850,24 @@ mod tests {
 
     #[test]
     fn edit_abort_is_none_never_a_default_commit() {
-                                               
-        assert_eq!(edit_message_with(None, "initial"), None);
-                                          
+                                                  
+        assert_eq!(edit_message_with(None, "initial"), EditOutcome::Aborted);
+                                             
         assert_eq!(
             edit_message_with(Some(std::ffi::OsStr::new("false")), "initial"),
-            None
+            EditOutcome::Aborted
         );
-                                                                              
+                                                                                 
         let empty_editor = editor_script("printf '' > \"$1\"\n");
         assert_eq!(
             edit_message_with(Some(empty_editor.as_os_str()), "initial"),
-            None
+            EditOutcome::Aborted
         );
-                                            
+                                              
         let rewriter = editor_script("printf 'edited message' > \"$1\"\n");
         assert_eq!(
-            edit_message_with(Some(rewriter.as_os_str()), "initial").as_deref(),
-            Some("edited message")
+            edit_message_with(Some(rewriter.as_os_str()), "initial"),
+            EditOutcome::Edited("edited message".to_string())
         );
     }
 

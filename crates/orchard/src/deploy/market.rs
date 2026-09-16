@@ -4,7 +4,7 @@
 //! config re-derive, format-lock drift, apk shape-lock) + a hot cert-presence check, behind one entry.
 //! `market upgrade` (Task 10+) stages + propagates a pin bump in one verified, all-or-nothing operation.
 //!
-                                                                                            
+                                                                                             
 //!
 //! ## The fail-closed gate (Task 7)
 //! `verify` parses the two central manifests (a parse failure there is a single hard precondition fail —
@@ -12,7 +12,7 @@
 //! short-circuiting on the first failure, so one run surfaces the full damage with `(where, detail)` per
 //! failed leg. The set of legs that ran is locked to [`CheckId::HOT_PATH`]: a silently dropped or
 //! duplicated check fails closed in [`CheckReport::into_result`] before the gate can ever report "green"
-                                                                                                                        
+                                                                                                                         
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ pub enum CheckId {
     /// §3a-4: sha256(recipes/service-manifest.toml) == the config pin.
     ConfigRederive,
     /// §3a-5: generated rust-toolchain/Containerfile match `pins.toml` + the retired fetch scripts
-                                    
+                                     
     FormatLockDrift,
     /// §3a-6: the apk closure is exactly the pinned shape (count + build-input allowlist).
     ApkShapeLock,
@@ -206,8 +206,8 @@ fn render_stale(stale: &[StaleCert]) -> String {
 }
 
 /// The `ManifestArtifactSet` leg: the consume-pins set is EXACTLY the canonical per-kind shape (§3a-1
+                                                                                                         
                                                                                                         
-                                                                                                       
 /// two checks have distinct error types, so they're stringified through one `Result<String, String>`.
 fn artifact_set_leg(manifest: &RepoManifest, consume: &PinManifest) -> Result<String, String> {
                                                                                                         
@@ -263,7 +263,7 @@ fn cert_presence_leg(
 /// lock — it deliberately runs ONE leg, not the gate.
 pub fn cert_presence_dry_run(opts: &VerifyOpts) -> Result<String, MarketError> {
     let consume = PinManifest::load(&opts.repo_root.join("consume-pins.toml"))?;
-    let manifest = RepoManifest::load(&opts.repo_root.join("repo-manifest.toml"))?;
+    let manifest = RepoManifest::load(&opts.repo_manifest)?;
     cert_presence_leg(&manifest, &consume, &opts.repo_root, &opts.allow_missing)
         .map(|s| format!("market verify --cert-presence: {s}"))
         .map_err(|e| MarketError::CertPresence(e.to_string()))
@@ -308,14 +308,11 @@ fn certs_thorough_leg(
 }
 
 /// `--all` (Task 12, off the hot path): hash EVERY store-backed consume artifact against its pin in the
-/// artifact-store (`$FRUIT_ARTIFACT_STORE`, else `<orchard>/../artifact-store`). An absent store/artifact or
+/// artifact-store (C5-resolved, `VerifyOpts::artifact_store`). An absent store/artifact or
 /// a byte↔pin mismatch is a HARD FAIL, never a skip (AC3-store) — via the SAME fail-closed `fetch_verified`
 /// gate the bake consumes through (no second hashing path to drift).
-fn store_hash_leg(consume: &PinManifest, repo_root: &Path) -> Result<String, MarketError> {
-    let store = std::env::var_os("FRUIT_ARTIFACT_STORE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root.join("../artifact-store"));
-    let backend = DirStore::new(&store);
+fn store_hash_leg(consume: &PinManifest, store: &Path) -> Result<String, MarketError> {
+    let backend = DirStore::new(store);
     let mut n = 0usize;
     for (key, pin) in &consume.artifacts {
         backend
@@ -330,8 +327,12 @@ fn store_hash_leg(consume: &PinManifest, repo_root: &Path) -> Result<String, Mar
 }
 
 pub struct VerifyOpts {
-    /// The orchard repo root (holds `consume-pins.toml` + `repo-manifest.toml`; the cwd contract).
+    /// The orchard repo root (holds `consume-pins.toml`; C5-resolved at the CLI).
     pub repo_root: PathBuf,
+    /// The repo-manifest path (C5-resolved; the staged verify re-roots it into the overlay).
+    pub repo_manifest: PathBuf,
+    /// The artifact store (C5-resolved; consumed by the `--all` store-hash leg).
+    pub artifact_store: PathBuf,
     /// Also run the thorough off-hot-path cert-trail audit (Task 12).
     pub certs: bool,
     /// Also hash each artifact-store binary against its pin (Task 12).
@@ -418,7 +419,7 @@ fn skipnote(skipped: &[String]) -> String {
 fn run_checks(opts: &VerifyOpts) -> Result<CheckReport, MarketError> {
                                                                                             
     let consume = PinManifest::load(&opts.repo_root.join("consume-pins.toml"))?;
-    let manifest = RepoManifest::load(&opts.repo_root.join("repo-manifest.toml"))?;
+    let manifest = RepoManifest::load(&opts.repo_manifest)?;
 
     let root = &opts.repo_root;
     let am = &opts.allow_missing;
@@ -487,14 +488,14 @@ pub fn verify(opts: &VerifyOpts) -> Result<String, MarketError> {
     let mut summary = run_checks(opts)?.into_result()?;
     if opts.certs {
         let consume = PinManifest::load(&opts.repo_root.join("consume-pins.toml"))?;
-        let manifest = RepoManifest::load(&opts.repo_root.join("repo-manifest.toml"))?;
+        let manifest = RepoManifest::load(&opts.repo_manifest)?;
         let extra = certs_thorough_leg(&manifest, &consume, &opts.repo_root, &opts.allow_missing)
             .map_err(|e| MarketError::CertPresence(e.to_string()))?;
         summary.push_str(&format!("; --certs: {extra}"));
     }
     if opts.all {
         let consume = PinManifest::load(&opts.repo_root.join("consume-pins.toml"))?;
-        let extra = store_hash_leg(&consume, &opts.repo_root)?;
+        let extra = store_hash_leg(&consume, &opts.artifact_store)?;
         summary.push_str(&format!("; --all: {extra}"));
     }
     Ok(summary)
@@ -521,8 +522,8 @@ pub struct OutdatedReport {
     pub checked: bool,
 }
 
-                                                                                                   
-                                                      
+/// The `--exit-drift` NAG mode (spec §5.2): a best-effort operator/CI nag, NOT a security gate —
+                                                       
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitDrift {
     /// Flag absent: pure report, always exit 0.
@@ -600,7 +601,7 @@ pub fn outdated(opts: &OutdatedOpts) -> Result<OutdatedReport, MarketError> {
 }
 
 /// Map the `--exit-drift` mode + a report to the process exit code (pure; the CLI applies it).
-                                                                                                  
+                                                                                                   
 pub fn outdated_exit_code(when: ExitDrift, report: &OutdatedReport) -> i32 {
     if !report.checked {
         return 0;
@@ -654,7 +655,7 @@ pub fn apks_dry_run_preview(repo_root: &Path, fetch: &dyn Fetcher) -> String {
     lines.join("\n")
 }
 
-                                                                                              
+                                                                                               
 /// build container from `pins.toml` (`[rust].container_digest` — docker runs an image id
 /// directly), never a mutable tag like `recipes-imgbuild:dev`. The explicit flag overrides.
 pub fn default_apks_container_image(pins: &Pins) -> String {

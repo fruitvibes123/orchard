@@ -112,11 +112,11 @@ sha256 = "1d18efed5e3b3875eeb703fc1a2842b4b19f99df4e79780e3034ce13db446d44"
 
 [artifacts.recipes-admin]
 kind = "binary"
-sha256 = "9edc71c9b0af99303fe44595849a2099a953cd3fcfb9931dfc60bcb308038049"
+sha256 = "7dc55a435e57ca7ad83fd759547fe2e810a034f2695f7d40a1fee127f1de00da"
 
 [artifacts.recipes-app]
 kind = "binary"
-sha256 = "ea1b460b80caac5a30c0c460abdacd148ba2184abec597741f33a3233fe115eb"
+sha256 = "3a075bb1e644e89f321ba81b0d3b4d40a2f4fde0708f70f61409b5a4cbb7294d"
 
 [artifacts.service-manifest]
 kind = "config"

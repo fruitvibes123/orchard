@@ -39,7 +39,8 @@ mod install_hotswap;
 mod install_seabios;
 mod install_uefi;
 mod installer_usb;
-mod qemu;
+mod persist_selfheal;
+pub(crate) mod qemu;
 mod rescue;
 mod runtime;
 mod update_seabios;
@@ -53,6 +54,7 @@ pub use install_hotswap::*;
 pub use install_seabios::*;
 pub use install_uefi::*;
 pub use installer_usb::*;
+pub use persist_selfheal::*;
 pub use qemu::*;
 pub use rescue::*;
 pub use runtime::*;
@@ -79,7 +81,7 @@ pub enum DryrunError {
     HostToolMissing(String),
     #[error("/dev/kvm is not available — dryrun boots with -enable-kvm and needs KVM")]
     KvmUnavailable,
-                                                                                                       
+                                                                                                        
     /// KVM boot, so a gate pointed at a bench fixture fails loudly instead of greening on the wrong
     /// artifact.
     #[error("prod-shape guard: {0}")]
@@ -138,6 +140,9 @@ pub enum DryrunError {
                                                                              
     #[error("ACME cert-lifecycle check failed: {0}")]
     AcmeLifecycle(String),
+                                                                           
+    #[error("persist self-heal check failed: {0}")]
+    PersistSelfheal(String),
     #[error("io {context}: {source}")]
     Io {
         context: String,
@@ -157,7 +162,7 @@ impl DryrunError {
 pub enum ServiceCheck {
     /// The reference (recipes) box: recipes answers via haproxy on `:443` (the HTTP contract).
     RecipesHttp,
-                                                                                                     
+                                                                                                      
     /// over SSH via `s6-svstat /run/service/<name>`. Proves "boots to running SERVICES" without a
     /// recipes-specific HTTP contract — the box-init topology + supervision generalize to any tenant.
     SupervisedUp(String),
@@ -177,14 +182,14 @@ pub struct DryrunOpts {
     pub ssh_port: u16,
     /// Host port forwarded to the guest's tenant HTTPS port ([`Self::guest_https_port`]).
     pub https_port: u16,
-                                                                                                           
+                                                                                                            
     /// The reference tenant serves on 443 (haproxy); a tenant declaring a different `probe.port` is
     /// forwarded + probed THERE instead of a hardcoded 443. Set from the manifest via
     /// [`Self::with_http_probe`]; [`Default`] is 443 (the reference).
     pub guest_https_port: u16,
     /// The URL path the HTTP "tenant alive" probe requests — the manifest's `probe.path` (§5.1f). The
     /// reference probes `/`; a tenant declaring a different `probe.path` is probed THERE. Manifest-driven
-                                                                    
+                                                                     
     pub probe_path: String,
     /// How long to wait for dropbear-up and for recipes to answer.
     pub boot_timeout: Duration,
@@ -193,17 +198,17 @@ pub struct DryrunOpts {
     /// Make the guest network HERMETIC (`-netdev user,…,restrict=on`): the hostfwd inbound ports
     /// still work (SSH/HTTPS assertions unaffected), but the guest gets NO outbound NAT/DNS.
     ///
-                                                                                                   
+                                                                                                    
     /// runs a real `fb-acme-renew` longrun, so a box booted under open NAT places a live **Let's
     /// Encrypt production** order from the operator's public IP — the same hazard `DebianE2eOpts`
     /// closed by defaulting hermetic. `b34c31f`'s `--memory-mb` first made `orchard dryrun` able to
     /// boot a weights box all the way to services-up, which is what connected this default to the
-                                                                                               
+                                                                                                
     /// --keep-running`) is its exact trigger. `dryrun/acme_lifecycle.rs` sets it explicitly on, so
     /// that gate is unaffected; a future operator needing outbound gets a `--allow-network` opt-out,
-                                                                                          
+                                                                                           
     pub restrict_net: bool,
-                                                                                                     
+                                                                                                      
     /// PRODUCTION shape before spending a KVM boot — whole-image buffering cannot fit (`image +
     /// INSTALL_MIN_RAM_BYTES > guest RAM`) plus a weights-payload floor against the profile's pinned
     /// bytes (see [`assert_prod_weights_shape`], which documents why the naive `image > RAM` is FALSE
@@ -232,7 +237,7 @@ impl Default for DryrunOpts {
 }
 
 impl DryrunOpts {
-                                                                                                         
+                                                                                                          
     /// the dryrun forwards to + the URL path it requests. This is what makes `probe.port`/`probe.path`
     /// CONSUMED rather than validated-but-inert: the reference gate derives them from the pinned
     /// service-manifest it fetches+verifies from the store (`probe.port`/`probe.path`), so a tenant
@@ -257,8 +262,8 @@ pub(crate) struct Layout {
     pub(crate) boot_offset: u64,
     pub(crate) boot_size: u64,
     /// Persist-skeleton component offset/size — the offset feeds the streaming `fb.image-layout`
-                                                                                            
-                                                            
+    /// append token (spec D3); the size feeds the staging-geometry fit (the skeleton persist
+                                                             
     pub(crate) persist_skeleton_offset: u64,
     pub(crate) persist_skeleton_size: u64,
     pub(crate) rootfs_offset: u64,
@@ -273,7 +278,10 @@ pub(crate) struct Layout {
 }
 
 /// RAII handle around the QEMU child: killed on `Drop` (any exit path) unless `keep_running`.
-pub(crate) struct QemuGuard {
+                                                                                    
+/// `prod_e2e::boot_provisioned_guest` alive across the `orchard run` it drives, then drop it — the
+/// test never constructs or inspects one, only keeps it in scope.
+pub struct QemuGuard {
     child: Child,
     keep_running: bool,
 }
@@ -333,7 +341,7 @@ pub(crate) fn layout_sidecar(img: &Path) -> PathBuf {
     img.with_extension("layout.toml")
 }
 
-                                                                                               
+                                                                                                
 ///
 /// Both re-anchored gates assert the streaming installer handles an image LARGER than the guest RAM. The
 /// image and the RAM both come from the runner, so without a floor the proof can silently decay: a
@@ -378,7 +386,7 @@ pub fn weights_proof_for_manifest(
 ///
 /// The f16 projector is not quantized, so it compresses far better than the q4_K text half — an 11%
 /// whole-volume gain. A 90% floor was calibrated on the bench number alone and would have aborted
-                                                                                                         
+                                                                                                          
 /// that compresses better still (a larger f16/f32 projector), while preserving the discrimination the
 /// floor exists for: bench 740 MB vs prod 1715 MB are **2.3× apart**, so a bench fixture supplied where
 /// production is required still lands far below the floor and is rejected.
@@ -390,8 +398,8 @@ const PAYLOAD_FLOOR_DEN: u64 = 10;
 /// Two checks, each closing a distinct way the re-anchored proof could rot:
 ///
 /// 1. **Whole-image buffering cannot fit:** `image + INSTALL_MIN_RAM_BYTES > guest RAM`. This is the
-                                                                                                           
-                                                                                                    
+                                                                                                            
+///    (spec D14), so it needed the image PLUS enough room to run; if that sum exceeds the guest, the
 ///    old path provably could not have installed this artifact and the streaming path's O(chunk) peak
 ///    is what makes the deploy possible.
 ///
@@ -534,7 +542,7 @@ pub(crate) fn parse_layout(path: &Path) -> Result<Layout, DryrunError> {
 /// A LOCAL build artifact beside the `.img` (`<stem>.vmlinuz` / `<stem>.initramfs`), failing closed if
 /// absent. Under O3 these are emitted as separate files (NOT sliced from the `.img`); the dryrun boots
 /// them via `-kernel`/`-initrd`, mirroring the on-box installer's kexec of the local vmlinuz+initramfs
-              
+               
 pub(crate) fn local_artifact(img: &Path, ext: &str) -> Result<PathBuf, DryrunError> {
     let p = img.with_extension(ext);
     if !p.is_file() {

@@ -1,13 +1,24 @@
-                                                                                                       
-                                                                                                     
+                                                                                                        
+                                                                                                      
 //! — the regression backstop the source-line ordering otherwise lacks. None of these need docker /
 //! kvm / network: every refusal fires in the early merge block.
 
 use std::path::Path;
 use std::process::{Command, Output};
 
-fn orchard() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_orchard"))
+/// Spawn hermetically: per-test HOME + state/config bases, so parallel tests never contend on
+                                                                                           
+/// state/config dirs.
+fn orchard(home: &Path) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_orchard"));
+    c.env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_STATE_HOME", home.join(".state"))
+                                                                                    
+        .env("ORCHARD_LOCK_DIR", home.join(".ceremony-lock"))
+        .env_remove("FRUIT_ARTIFACT_STORE")
+        .env_remove("ORCHARD_LOCK_TOKEN");
+    c
 }
 
 fn write_profile(dir: &Path, body: &str) -> std::path::PathBuf {
@@ -24,14 +35,14 @@ fn combined(out: &Output) -> String {
     )
 }
 
-                                                                                                   
+                                                                                                    
 /// with the naming-both-sources message BEFORE any ceremony action — proven by the message AND the
 /// ABSENCE of any ceremony-progress output (no lock/build/scan/kexec).
 #[test]
 fn prod_profile_missing_pubkey_refuses_before_any_action() {
     let dir = tempfile::tempdir().unwrap();
     let profile = write_profile(dir.path(), "ip = \"203.0.113.5\"\nport = 2222\n");
-    let out = orchard()
+    let out = orchard(dir.path())
         .args(["prod", "203.0.113.5", "--profile"])
         .arg(&profile)
         .arg("--wipe-confirmed")
@@ -71,7 +82,7 @@ fn prod_profile_missing_ssh_identity_refuses() {
         dir.path(),
         "ip = \"203.0.113.5\"\noperator_pubkey = \"/tmp/op.pub\"\n",
     );
-    let out = orchard()
+    let out = orchard(dir.path())
         .args(["prod", "203.0.113.5", "--profile"])
         .arg(&profile)
         .arg("--wipe-confirmed")
@@ -90,7 +101,7 @@ fn prod_profile_missing_ssh_identity_refuses() {
 fn prod_profile_with_destructive_key_refuses() {
     let dir = tempfile::tempdir().unwrap();
     let profile = write_profile(dir.path(), "ip = \"203.0.113.5\"\nwipe_confirmed = true\n");
-    let out = orchard()
+    let out = orchard(dir.path())
         .args(["prod", "203.0.113.5", "--profile"])
         .arg(&profile)
         .arg("--wipe-confirmed")
@@ -109,7 +120,7 @@ fn prod_profile_with_destructive_key_refuses() {
 fn build_profile_missing_domain_refuses_with_ignored_note() {
     let dir = tempfile::tempdir().unwrap();
     let profile = write_profile(dir.path(), "ip = \"203.0.113.5\"\nport = 2222\n");
-    let out = orchard()
+    let out = orchard(dir.path())
         .args(["build", "--profile"])
         .arg(&profile)
         .output()

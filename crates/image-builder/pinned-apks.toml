@@ -68,8 +68,8 @@ signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
 name = "haproxy"
-version = "3.2.22-r0"
-sha256 = "53dcf00e0af78ea9f4997492993516a45a3f6fb9049410583aac0cbd8e010d1a"
+version = "3.2.23-r0"
+sha256 = "4c96c6dacc3c95de832f0552ca30f3b872ff7f9a2d09458509c099ff8d7d5b5b"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
@@ -80,8 +80,8 @@ signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
 name = "libblkid"
-version = "2.41.4-r0"
-sha256 = "4b5189b32c2b0f786480933db4ab78a3a93ee2887236e51dfbdb1bad35382a2b"
+version = "2.41.6-r1"
+sha256 = "e8c829016f4b82f34500b05023060d5f1eb8f06e5affadb0a4427cc26dbb58df"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
@@ -92,8 +92,8 @@ signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
 name = "libcrypto3"
-version = "3.5.7-r0"
-sha256 = "be18503b98af5223755f9e5678a94e3a71e6acf47d94fb28d23a7106f553fcc7"
+version = "3.5.8-r0"
+sha256 = "a5592b5cf276bc7a30ac7b161d46446085490b640faa1f839ea98eb15aacad31"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
@@ -128,14 +128,14 @@ signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
 name = "libssl3"
-version = "3.5.7-r0"
-sha256 = "937dbc5f0e3b1062f6cfdbd93de48660f6132474e29f9b7d1857a705c48f1b28"
+version = "3.5.8-r0"
+sha256 = "f80b76cb5e5a52cfc1ced08f8dc3022adc0ce0a3d6e7741976731b22c71fe310"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
 name = "libuuid"
-version = "2.41.4-r0"
-sha256 = "ec813704b4c50e28e389d8d1e3defba4fbd429ca5fee22be908b1ac625b9f2c5"
+version = "2.41.6-r1"
+sha256 = "e428f43397e863243f17aa85c5b1c3a99adfcb9277d2300b1df7759502db4b6c"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
@@ -164,8 +164,8 @@ signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
 name = "pcre2"
-version = "10.47-r0"
-sha256 = "7880493ea1a743c97964e2444ef47649e43bc9fee25949c6712a8a03823985d3"
+version = "10.48-r0"
+sha256 = "2ad30ab5e606ac08158e405c29e1c18154c9df30ee3381db75096c023865d7b6"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
@@ -206,8 +206,8 @@ signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
 name = "sqlite-libs"
-version = "3.51.2-r0"
-sha256 = "684907db8fae747dd69758926d607a666f853d9c8525424cf281011b1e9d6ed6"
+version = "3.53.4-r0"
+sha256 = "414be12c879052f4614a42a10fc12af67a88ba49e8e1e33f78cd9ddbbdb13fee"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[package]]
@@ -230,8 +230,8 @@ signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[build_input]]
 name = "linux-virt"
-version = "6.18.44-r0"
-sha256 = "fe0cfb3c64b0f0739d9450229215433e31f3d57e25a61914314fa1cf00f1a798"
+version = "6.18.50-r0"
+sha256 = "c3e80096e4feee7eed0852ba59468d8ec911e740ca58994f4a380af8d6503099"
 signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59"
 
 [[build_input]]

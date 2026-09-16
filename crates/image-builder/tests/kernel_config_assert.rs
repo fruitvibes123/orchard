@@ -1,4 +1,4 @@
-                                                                                                
+                                                                                                 
 
 use recipes_image_builder::kernel::{assert_kernel_config, ConfigAssertError, KernelConfigPins};
 
@@ -20,7 +20,7 @@ fn complete_config(pins: &KernelConfigPins) -> String {
         "CONFIG_CC_VERSION_TEXT=\"gcc (Alpine) 14.2.0\"".to_string(),
         "CONFIG_64BIT=y".to_string(),
     ];
-    for cfg in &pins.exact_match {
+    for cfg in pins.exact_match.iter().chain(&pins.observe_exact) {
         match cfg.strip_suffix("=n") {
             Some(sym) => lines.push(format!("# {sym} is not set")),
             None => lines.push(cfg.clone()),
@@ -38,6 +38,8 @@ fn pins_cover_the_spec_blocks() {
     let pins = pins();
                                                                                                    
                                                                                
+                                                                                            
+                                                                                     
                                                                                                         
                                                                                                         
                                                                                                             
@@ -45,7 +47,7 @@ fn pins_cover_the_spec_blocks() {
                                                                                              
                                                                                                 
                                                                                                         
-                                                                                                 
+                                                                                     
                                                                              
                                                                                   
                                                                                                       
@@ -63,9 +65,52 @@ fn pins_cover_the_spec_blocks() {
                                                                                                           
                                                                                                       
                                                                                                   
-                                                                                                
+                                                                                    
     assert_eq!(pins.exact_match.len(), 60, "exact-match symbol count");
+                                              
+    assert_eq!(pins.observe_exact.len(), 18, "observe-exact symbol count");
     assert_eq!(pins.prefix_match.len(), 1, "prefix-match symbol count");
+}
+
+                                                                                              
+/// asserts the LENGTH, so a swap — delete one pin, add another — keeps the count at 18 and stays
+/// green. Sorted-list equality reddens on an addition, a deletion, a rename, a value change and a
+/// duplicate alike.
+///
+/// Model: the toml-decoded `observe_exact` strings compared literally, embedded quotes included.
+/// Not claimed here: that these symbols exist in any kernel (kernel_pin_sources.rs), that no
+/// fragment force-sets them (kernel_pin_sources.rs), or that a produced `.config` satisfies them
+/// (the pin gate).
+#[test]
+fn the_observe_exact_set_is_exactly_the_18_h1_pins() {
+    const H1: [&str; 18] = [
+        "CONFIG_RANDOMIZE_BASE=y",
+        "CONFIG_RANDOMIZE_MEMORY=y",
+        "CONFIG_STACKPROTECTOR_STRONG=y",
+        "CONFIG_FORTIFY_SOURCE=y",
+        "CONFIG_HARDENED_USERCOPY=y",
+        "CONFIG_SLAB_FREELIST_RANDOM=y",
+        "CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y",
+        "CONFIG_MITIGATION_PAGE_TABLE_ISOLATION=y",
+        "CONFIG_MITIGATION_RETPOLINE=y",
+        "CONFIG_STRICT_KERNEL_RWX=y",
+        "CONFIG_VMAP_STACK=y",
+        "CONFIG_LEGACY_VSYSCALL_NONE=y",
+        "CONFIG_STRICT_DEVMEM=y",
+        "CONFIG_IO_STRICT_DEVMEM=y",
+        "CONFIG_SECURITY_DMESG_RESTRICT=y",
+        "CONFIG_ZERO_CALL_USED_REGS=y",
+        "CONFIG_BPF_UNPRIV_DEFAULT_OFF=y",
+        r#"CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity""#,
+    ];
+    let mut want: Vec<String> = H1.iter().map(|s| (*s).to_string()).collect();
+    want.sort();
+    let mut got = pins().observe_exact;
+    got.sort();
+    assert_eq!(
+        got, want,
+        "the H-1 observe set drifted; re-freeze this list only with the change"
+    );
 }
 
 /// C3: the four USB boot-media drivers live in the two per-substrate blocks — bare-metal-uefi asserts
@@ -73,7 +118,7 @@ fn pins_cover_the_spec_blocks() {
 /// arms a fail-closed `CONFIG_USB`-prefix guard so a NEW USB `=y` driver the exact list never named is
 /// still caught. The blocks are exact inverses over the same four lines, so a symbol can never be
 /// simultaneously required and forbidden. Deliberately USB-ONLY: the DISK transports
-/// (SCSI/ATA/NVMe/BLK_DEV_SD) are force-set + PINNED in the shared block on BOTH substrates (audit L-1),
+/// (SCSI/ATA/NVMe/BLK_DEV_SD) are force-set + PINNED in the shared block on BOTH substrates,
 /// so the box boots on any KVM hypervisor's virtio-blk / virtio-scsi / NVMe / SATA disk.
 #[test]
 fn substrate_blocks_split_the_usb_configs() {
@@ -193,11 +238,11 @@ fn the_real_vpskvm_prefix_guard_rejects_an_unenumerated_usb_driver() {
         .expect("vps-kvm block parses"),
     );
                                                                                                           
-    let rogue = format!("{}\nCONFIG_USB_XHCI_PLAT_HCD=y\n", complete_config(&merged));
+    let rogue = format!("{}\nCONFIG_USB_XHCI_PLATFORM=y\n", complete_config(&merged));
     let err = assert_kernel_config(&rogue, &merged).unwrap_err();
     assert!(
         matches!(err, ConfigAssertError::Missing(ref m)
-            if m.contains("CONFIG_USB_XHCI_PLAT_HCD") && m.contains("forbidden config domain")),
+            if m.contains("CONFIG_USB_XHCI_PLATFORM") && m.contains("forbidden config domain")),
         "the real vps-kvm prefix guard must reject an un-enumerated USB driver: {err:?}"
     );
                                                                                                
@@ -303,15 +348,17 @@ fn missing_system_trusted_keys_fails() {
 fn hardening_fragment_satisfies_every_pin() {
                                                                                                   
                                                                                                  
-                                                                                               
-                                                                                                  
-    let pins = pins();
+                                                                                                    
+                                                                                
+    let mut pins = pins();
+    pins.observe_exact = vec![];
     let fragment = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/kernel-hardening.config"
     ));
-    assert_kernel_config(fragment, &pins)
-        .expect("kernel-hardening.config must satisfy every kernel-config-pin (no drift)");
+    assert_kernel_config(fragment, &pins).expect(
+        "kernel-hardening.config must satisfy every force-set kernel-config-pin (no drift)",
+    );
 }
 
 #[test]

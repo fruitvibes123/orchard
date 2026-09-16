@@ -1,15 +1,15 @@
-                                                                                                        
+                                                                                                         
 //! gap grocer §9 named ("the binary-repo path — the §6 linkage assert + `--build-dir` — gets NO
 //! produced-bytes proof here; it is increment 2's own gate"). On REAL built binaries it proves a
 //! `market upgrade --binary` publish through the REAL grocer (ELF/linkage-assert + hash + put) + the REAL
 //! executor is:
-                                                                                                           
+                                                                                                            
 //!       on the binary path too), and
 //!   (2) ELF-guarded — a static-PIE swapped in where a dynamic service is declared is REFUSED before any
 //!       store write (the §6 control fires end-to-end through grocer + the executor).
 //!
 //! `#[ignore]`'d + env-gated (`RECIPES_BINARY_GATE`); PANICS if run `--ignored` without the env, so it can
-                                                                                                  
+                                                                                                   
 //! `make boot-gate`. Needs docker (the build-only compile).
 //!
 //! Runs against the REAL trees safely: BOTH cases abort BEFORE any swap (forced-fail / ELF-refusal → nothing
@@ -24,7 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use orchard::deploy::market_exec::{ShellStepExec, Stage, default_store, execute, resolve_layout};
+use orchard::deploy::market_exec::{ShellStepExec, Stage, execute, resolve_layout};
 use orchard::deploy::market_upgrade::{Target, UpgradeError, plan};
 use recipes_image_builder::pin_manifest::PinManifest;
 use recipes_image_builder::repo_manifest::RepoManifest;
@@ -181,7 +181,7 @@ fn build_fb_handoff(real: &RealEco) -> PathBuf {
     handoff
 }
 
-                                                                                                            
+                                                                                                             
 /// byte-identical. grocer publishes the real built binaries into the STAGE, then the forced staged-verify
 /// fails → the executor aborts BEFORE the swap → nothing in the real ecosystem changed.
 fn fail_before_swap_is_byte_identical(real: &RealEco, handoff: &Path) {
@@ -192,6 +192,7 @@ fn fail_before_swap_is_byte_identical(real: &RealEco, handoff: &Path) {
         &real.manifest,
         real.orchard_root.clone(),
         real.store.clone(),
+        real.orchard_root.join("repo-manifest.toml"),
     );
     let steps = plan(
         &Target::Binary("fb-acme".into()),
@@ -238,7 +239,7 @@ fn fail_before_swap_is_byte_identical(real: &RealEco, handoff: &Path) {
     );
 }
 
-                                                                                                              
+                                                                                                               
 /// where the manifest declares `fb-acme` as `dynamic` is REFUSED by grocer before any store write; the
 /// executor aborts before the swap → the REAL trees are byte-identical. Uses a passthrough verify to prove
 /// the refusal comes from the ELF assert, NOT the staged verify.
@@ -260,6 +261,7 @@ fn elf_assert_fires_and_is_byte_identical(real: &RealEco, handoff: &Path) {
         &real.manifest,
         real.orchard_root.clone(),
         real.store.clone(),
+        real.orchard_root.join("repo-manifest.toml"),
     );
     let steps = plan(
         &Target::Binary("fb-acme".into()),
@@ -327,4 +329,13 @@ fn binary_publish_is_atomic_and_elf_asserts() {
         "\nbinary_publish_is_atomic_and_elf_asserts: atomicity + the §6 ELF/linkage control both PASS on \
          produced bytes — the increment-2 binary path proven."
     );
+}
+
+/// The operator-store locator for fixture SOURCING (env-honoring: the gate harness may point
+/// FRUIT_ARTIFACT_STORE at a custom store). Production resolution went to `deploy::context`
+/// (guided-ceremony C5); this local copy keeps the harness env contract.
+fn default_store(orchard_root: &std::path::Path) -> std::path::PathBuf {
+    std::env::var_os("FRUIT_ARTIFACT_STORE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| orchard_root.join("../artifact-store"))
 }

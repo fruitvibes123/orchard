@@ -5,8 +5,8 @@
 //! `keys` / `fingerprints` modules — logic in the lib, where the `pub(crate)` key helpers live).
 //!
 //! Artifact `.sig` sidecars are the ed25519 dragonfruit bundles, signed by the operator AFTER the
-                                                                                                    
-                                                                                                     
+//! build when an artifact key set is present (Spec 2 §2/§3, C2; the menu's software/docker rungs);
+                                                                                                      
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -31,7 +31,7 @@ pub const DEFAULT_KBUILD_DIR: &str = "/tmp/recipes-kbuild";
 
 /// The default staged kernel source TARBALL (`<DEFAULT_KBUILD_DIR>/linux-<pins.toml kernel.version>.tar.xz`),
 /// derived from the central manifest so a kernel bump is a single `pins.toml` edit. `orchard prime`
-                                                                                        
+                                                                                         
 pub fn default_kernel_xz(
     repo_root: &Path,
 ) -> Result<PathBuf, recipes_image_builder::pins::PinsError> {
@@ -112,12 +112,15 @@ pub struct BuildImageOpts {
     pub keys_dir: PathBuf,
     /// The recipes repo root (pins, trust anchors, `build-kernel.sh`, the app source).
     pub repo_root: PathBuf,
+    /// The artifact store (C5-resolved at the CLI; the env/default reads left this layer —
+                              
+    pub artifact_store: PathBuf,
     /// The staged, pinned kernel source TARBALL (`orchard prime` output) — re-verified at consumption
-                                                                                                      
+                                                                                                       
     /// an extracted tree to the `.tar.xz`. Defaults to `default_kernel_xz`; override with `--ksrc`.
     pub kernel_src: PathBuf,
     /// The staged, pinned syslinux source TARBALL (`orchard prime` output) — re-verified at
-                                                                                              
+                                                                                               
     /// extraction by `bake_boot_fs`. Defaults to `default_syslinux_src`; override with `--syslinux-src`.
     pub syslinux_src: PathBuf,
     /// Output dir for the `.img` triple.
@@ -132,7 +135,7 @@ pub struct BuildImageOpts {
     /// The operator recovery pubkey path to bake into `/etc/ssh/recovery_authorized_keys` — the
     /// rescue dropbear's sole authorized key (in-rootfs, so it authenticates when `/persist` is
     /// unmountable). `None` ships the deploy-time placeholder. Validated derive-not-cat
-                                                                                                     
+                                                                                                      
     pub recovery_pubkey: Option<PathBuf>,
     /// The operator's NORMAL-boot pubkey baked into the persist-skeleton's `authorized_keys` (the box's
     /// everyday login). `None` bakes an un-loginable skeleton (same posture as the recovery placeholder).
@@ -159,13 +162,20 @@ pub struct BuildImageOpts {
     /// The operator-supplied service manifest (`--manifest <path>`) the bake renders the tenant
     /// topology from — parsed + validated through the §5.3 fail-closed gate. `None` bakes the pinned
     /// reference tenant (byte-identical to today's box). The non-recipes generalization seam
-                                                                       
+                                                                        
     pub manifest_path: Option<PathBuf>,
     /// os-update A/B v1 (§4i): the per-stream monotonic image serial (`--image-version`), stamped
     /// firmware-unconditionally into the rootfs + `.layout.toml`; the box's version-floor anti-rollback
     /// compares against it. The operator OWNS the sequence (sovereign); the box-side `version ≤ floor`
     /// refusal is the enforcement. Defaults to `0` at the CLI for an unversioned dev/smoke build.
     pub image_version: u64,
+                                                                                              
+                                                                                            
+    pub dha_weights_gguf: Option<PathBuf>,
+    /// The projector GGUF (`--dha-mmproj-gguf`; replaced `RECIPES_DHA_MMPROJ_GGUF`). `None` with a
+    /// weights input ⇒ the pinned file name resolved beside the model GGUF (D16); pin-verified
+    /// either way.
+    pub dha_mmproj_gguf: Option<PathBuf>,
 }
 
 /// Validate the operator `--net` value (the `fb.net=` cmdline VALUE). The load-bearing invariant:
@@ -194,7 +204,7 @@ pub fn validate_net(s: &str) -> Result<String, String> {
     Ok(s.to_string())
 }
 
-                                                                                                
+                                                                                                 
 /// (`Substrate::from_firmware`); `--substrate` is a belt-and-braces operator ASSERTION, never an
 /// independent input — it can only agree or abort, never SELECT. `None` ⇒ ok (the derivation
 /// stands). `Some(s)` ⇒ ok iff `s` equals the firmware-derived token, else a fail-closed refusal
@@ -279,15 +289,26 @@ pub fn build_image(opts: &BuildImageOpts) -> Result<BuildOutputs, BuildImageErro
     }
                                                                                                   
                                                                                               
-    let dirty = !git_output(&opts.repo_root, &["status", "--porcelain"])?.is_empty();
+                                                                                                
+                                                                                             
+    let dirty = !git_output(
+        &opts.repo_root,
+        &["--no-optional-locks", "status", "--porcelain"],
+    )?
+    .is_empty();
     if dirty && !opts.allow_dirty {
         return Err(BuildImageError::DirtyTree);
     }
 
                                                                                                            
-                                                                                                             
+                                                                                                        
                                                                                                       
-    let weights = resolve_weights_input(&opts.repo_root, opts.manifest_path.as_deref())?;
+    let weights = resolve_weights_input(
+        &opts.repo_root,
+        opts.manifest_path.as_deref(),
+        opts.dha_weights_gguf.as_deref(),
+        opts.dha_mmproj_gguf.as_deref(),
+    )?;
 
     let ib = opts.repo_root.join("crates/image-builder");
 
@@ -391,11 +412,8 @@ pub fn build_image(opts: &BuildImageOpts) -> Result<BuildOutputs, BuildImageErro
             "vendor/ integrity: only {n_src} source drop(s) verified, expected >= 4 (consume-pins truncated?)"
         )));
     }
-    let store_path = std::env::var_os("FRUIT_ARTIFACT_STORE")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| opts.repo_root.join("../artifact-store"));
     let store: Box<dyn recipes_image_builder::artifact_store::ArtifactStore> = Box::new(
-        recipes_image_builder::artifact_store::DirStore::new(&store_path),
+        recipes_image_builder::artifact_store::DirStore::new(&opts.artifact_store),
     );
 
                                                                                                          
@@ -505,6 +523,33 @@ pub fn build_image(opts: &BuildImageOpts) -> Result<BuildOutputs, BuildImageErro
 
     let built = build::build(&cfg, &apk_pins, &kernel_pins, &provider, &tools)?;
 
+                                                                                                
+                                                                                                    
+                                                                                                  
+                                                                                            
+                                                                                   
+    {
+        let provenance = crate::ceremony::gate_record::compose(
+            &cfg.image_label,
+            crate::ceremony::gate_record::BuildParams {
+                domain: cfg.domain.clone(),
+                                                                                          
+                                                                                         
+                net: cfg.net.clone().unwrap_or_default(),
+                firmware: cfg.firmware.as_str().to_string(),
+                image_version: cfg.image_version,
+                git_sha: cfg.git_sha.clone(),
+            },
+            &built.outputs.img,
+            &built.outputs.layout,
+            &built.outputs.vmlinuz,
+            &built.outputs.initramfs,
+        )
+        .map_err(|e| BuildImageError::Other(e.to_string()))?;
+        crate::ceremony::gate_record::write(&built.outputs.img, &provenance)
+            .map_err(|e| BuildImageError::Other(e.to_string()))?;
+    }
+
                                                                                                     
                                                                                                  
                                                                                                   
@@ -577,7 +622,7 @@ pub(crate) fn pubkey_sha256_fingerprint(pubkey_line: &str) -> Result<String, Bui
 }
 
 /// Validate + extract a single SSH public-key line from an operator-supplied path, baking-safe
-                                                                                      
+                                                                                       
 /// `ssh-keygen -y -f /dev/stdin` so a privkey passed by typo yields only its pubkey half (the secret
 /// never reaches the rootfs); a pubkey input is validated (`ssh-keygen -l`) and used directly. `kind`
 /// ("operator"/"recovery") labels the error + the wrong-path hint.
@@ -725,29 +770,33 @@ fn image_signing_fingerprint(toml_path: &Path) -> Result<String, BuildImageError
         })
 }
 
-/// dha Component E: resolve the optional weights build input. `RECIPES_DHA_WEIGHTS_GGUF` UNSET ⇒ a
-                                                                                                      
-                                                                                                        
+/// dha Component E: resolve the optional weights build input. `dha_weights_gguf` NONE ⇒ a non-dha
+                                                                                                
+/// sha256 pins of the `models.toml` profile THIS tenant manifest selects (D15 — by manifest file stem,
 /// fail-closed); `build()` re-hashes each file against its pin FAIL-CLOSED (this resolution is early
-/// feedback, that re-hash is the load-bearing gate). The env var is the weights-build opt-in (the leanest
-/// seam — it reuses the boot-gate `RECIPES_*` env idiom; the bake writes each file under its canonical
-/// in-volume name regardless of the source filename). The existence check here fails fast with a friendly
-/// error before the expensive apk/kernel work (mirrors the kernel/syslinux source checks).
+/// feedback, that re-hash is the load-bearing gate). The flag is the weights-build opt-in
+                                                                                                   
+/// changes produced bytes is a build parameter; the CLI refuses a set env var with the flag cure).
+/// The existence check here fails fast with a friendly error before the expensive apk/kernel work
+/// (mirrors the kernel/syslinux source checks).
 ///
-                                                                                                         
-/// NEXT TO the model GGUF (the operator's model dir holds both). Either way `build()` verifies its pinned
-/// sha256, so the convenience fallback cannot introduce unpinned content — a wrong file aborts the build.
+/// D16 — the projector's path: `dha_mmproj_gguf` when set, else the pinned `file` name resolved
+/// NEXT TO the model GGUF (the operator's model dir holds both). Either way `build()` verifies its
+/// pinned sha256, so the convenience fallback cannot introduce unpinned content — a wrong file
+/// aborts the build.
 fn resolve_weights_input(
     repo_root: &Path,
     manifest_path: Option<&Path>,
+    dha_weights_gguf: Option<&Path>,
+    dha_mmproj_gguf: Option<&Path>,
 ) -> Result<Option<WeightsInput>, BuildImageError> {
-    let Some(gguf) = std::env::var_os("RECIPES_DHA_WEIGHTS_GGUF") else {
+    let Some(gguf) = dha_weights_gguf else {
         return Ok(None);
     };
-    let gguf_path = PathBuf::from(gguf);
+    let gguf_path = gguf.to_path_buf();
     if !gguf_path.is_file() {
         return Err(BuildImageError::Other(format!(
-            "RECIPES_DHA_WEIGHTS_GGUF={} is not a file (the operator supplies the weights GGUF out-of-band)",
+            "--dha-weights-gguf {} is not a file (the operator supplies the weights GGUF out-of-band)",
             gguf_path.display()
         )));
     }
@@ -760,8 +809,8 @@ fn resolve_weights_input(
     let mmproj = match profile.weights.mmproj.as_ref() {
         None => None,
         Some(pin) => {
-            let path = match std::env::var_os("RECIPES_DHA_MMPROJ_GGUF") {
-                Some(p) => PathBuf::from(p),
+            let path = match dha_mmproj_gguf {
+                Some(p) => p.to_path_buf(),
                 None => gguf_path
                     .parent()
                     .unwrap_or_else(|| Path::new("."))
@@ -770,7 +819,7 @@ fn resolve_weights_input(
             if !path.is_file() {
                 return Err(BuildImageError::Other(format!(
                     "this manifest's models.toml profile pins a vision projector ({}) but {} is not a \
-                     file — supply it beside the model GGUF, or point RECIPES_DHA_MMPROJ_GGUF at it",
+                     file — supply it beside the model GGUF, or pass --dha-mmproj-gguf",
                     pin.file,
                     path.display()
                 )));
@@ -806,7 +855,7 @@ fn resolve_weights_anchor(
     }
     if !have_weights {
         return Err(BuildImageError::Other(
-            "--weights-anchor runtime requires a weights input (set RECIPES_DHA_WEIGHTS_GGUF)"
+            "--weights-anchor runtime requires a weights input (pass --dha-weights-gguf)"
                 .to_string(),
         ));
     }
@@ -847,8 +896,8 @@ fn resolve_weights_anchor(
     let pin_path = super::pinned_artifact_root_path(&opts.repo_root);
     let plan = super::artifact_sign::plan_signing(&opts.keys_dir, &pin_path)
         .map_err(|e| BuildImageError::Other(format!("plan the weights-record signing: {e}")))?;
-                                                                                              
-                                                                                                        
+                                                                                             
+                       
     #[allow(clippy::type_complexity)]
     let sign: Box<dyn Fn(&[u8]) -> Result<SignedWeightsManifest, String>> = match plan {
         SignPlan::Host(set) => Box::new(move |manifest: &[u8]| {
@@ -913,6 +962,11 @@ fn resolve_weights_anchor(
     }))
 }
 
+/// Where the image triple lands when neither a flag nor the profile names a directory. ONE home:
+/// `build`'s merge, the ceremony's spine default and the ceremony runner's artifact lookup all
+/// read it, so a change moves all three together.
+pub const DEFAULT_OUT_DIR: &str = "/tmp";
+
 /// The artifact-identity label (L-1): the clean `git_sha`, suffixed `-dirty` for an `--allow-dirty`
 /// build. Names the `.img` triple so a dirty build is distinguishable. The
 /// CLEAN `git_sha` (NOT this label) feeds the rescue-seed IKM — `PublicInputs::new` requires exactly
@@ -952,7 +1006,7 @@ fn io_at(path: &Path) -> impl Fn(std::io::Error) -> BuildImageError {
     }
 }
 
-                                                                                                     
+                                                                                                      
 /// into this binary) differs from `head` (the working-tree HEAD `deploy build` resolved). The
 /// image-builder orchestration is compiled in, so a not-recompiled binary ships a stale tree under a
 /// fresh label. A `None`/"unknown" embedded sha (a git-less build of orchard) is never stale —
@@ -984,7 +1038,7 @@ fn check_build_freshness(
 mod tests {
     use super::*;
 
-                                                                                                    
+                                                                                                     
     #[test]
     fn explicit_substrate_mismatch_refuses() {
                                                                                   
@@ -1002,7 +1056,7 @@ mod tests {
         assert!(check_substrate_flag(Firmware::Uefi, Some("vps-kvm")).is_err());
     }
 
-                                                                                                      
+                                                                                                       
     /// git-less ("unknown"/absent) embed both skip it (fail-safe — never a false hard stop).
     #[test]
     fn check_build_freshness_flags_only_a_real_mismatch() {
@@ -1088,6 +1142,7 @@ mod tests {
         let opts = BuildImageOpts {
             keys_dir: tmp.path().into(),
             repo_root: tmp.path().into(),
+            artifact_store: tmp.path().into(),
             kernel_src: tmp.path().into(),
             syslinux_src: tmp.path().into(),
             out_dir: tmp.path().into(),
@@ -1102,6 +1157,8 @@ mod tests {
             manifest_path: None,
             image_version: 0,
             runtime_weights: false,
+            dha_weights_gguf: None,
+            dha_mmproj_gguf: None,
         };
         assert!(matches!(
             build_image(&opts),
@@ -1129,7 +1186,7 @@ mod tests {
     /// a byte-identical `.img`. This is the empirical proof that closes `build-kernel.sh`'s
     /// "intended-not-proven" determinism + the whole-`.img` reproducibility. Needs the throwaway key
     /// set (`/tmp/recipes-test-keys`, a `generate-keys` run), the staged kernel source TARBALL
-                                                                                                      
+                                                                                                       
     /// each build re-verifies + extracts fresh), and docker `recipes-imgbuild:dev`. Runs TWO full
     /// builds (kernel compile + musl app build ×2) → VERY slow; `#[ignore]`.
     #[test]
@@ -1166,6 +1223,7 @@ mod tests {
         let opts = |out: std::path::PathBuf| BuildImageOpts {
             keys_dir: keys.clone(),
             repo_root: repo_root.clone(),
+            artifact_store: crate::deploy::context::store_default(&repo_root),
             kernel_src: ksrc.clone(),
             syslinux_src: syslinux_src.clone(),
             out_dir: out,
@@ -1180,6 +1238,8 @@ mod tests {
             manifest_path: None,
             image_version: 0,
             runtime_weights: false,
+            dha_weights_gguf: None,
+            dha_mmproj_gguf: None,
         };
         let out_a = tempfile::tempdir().unwrap();
         let out_b = tempfile::tempdir().unwrap();
@@ -1231,6 +1291,7 @@ mod tests {
         let opts = |out: std::path::PathBuf| BuildImageOpts {
             keys_dir: "/tmp/recipes-test-keys".into(),
             repo_root: repo_root.clone(),
+            artifact_store: crate::deploy::context::store_default(&repo_root),
             kernel_src: default_kernel_xz(&repo_root).unwrap(),
             syslinux_src: default_syslinux_src(&repo_root).unwrap(),
             out_dir: out,
@@ -1245,6 +1306,8 @@ mod tests {
             manifest_path: None,
             image_version: 0,
             runtime_weights: false,
+            dha_weights_gguf: None,
+            dha_mmproj_gguf: None,
         };
         let (out_a, out_b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let a = build_image(&opts(out_a.path().into())).expect("build A");

@@ -4,16 +4,28 @@ How to build a box `.img` with Orchard, end to end: prerequisites, one-time setu
 command, how to verify the result, the build variants, and how to keep the pins fresh.
 
 Orchard is the operator-host build/deploy factory. `orchard build` turns the operator key set plus a
-set of pinned inputs into the box image triple. The box is an immutable distro (read-only
-squashfs + dm-verity + IMA/EVM + an operator-signed `.img`); this guide covers producing that image,
-not deploying it (deploy is `orchard prod`, out of scope here).
+set of pinned inputs into the box image triple. The box is the Plan 3.4v2 immutable distro (read-only
+squashfs + dm-verity + IMA/EVM + an operator-signed `.img`). This guide covers producing that image
+(§1 to §8) and the operator ceremonies around a box that already exists: backup and restore (§11),
+the OS self-update (§12) and key rotation (§13). The first install is `orchard guide`:
+`docs/guided-quickstart.md`.
 
-> This public tree is an exported copy of the operator's canonical repo — see the README's
-> provenance note for what that means.
+> Run every command below **from the orchard repo root** (`Projects/fruit-ecosystem/orchard`) unless
+> stated otherwise. Commands are written as `orchard <verb>`; install the invocation shim once to
+> make that form work from anywhere inside a checkout (§10 § Invocation form):
+>
+> ```sh
+> cargo build --release -p orchard-shim
+> cp target/release/orchard-shim ~/.local/bin/orchard
+> ```
+>
+> Without the shim, spell each as `cargo run -p orchard -- <verb>`.
 
-> Run every command below **from the orchard repo root** unless
-> stated otherwise. The CLI is shown as `cargo run -p orchard -- <cmd>`; for repeated builds compile a
-> release binary once (`cargo build --release -p orchard`) and call `./target/release/orchard <cmd>`.
+Two ways to use this. `orchard guide` runs the whole install ceremony (the container build, the
+keys, the pinned sources, the store, the image build, the gate and the install) as one interview;
+`docs/guided-quickstart.md` is that path, one page. This guide is the by-hand path and the
+reference: §4 to §6 are the same steps run one verb at a time, and §7 to §13 cover the variants,
+the pins, backup and restore, the OS update and key rotation, which the ceremony does not do.
 
 ---
 
@@ -88,7 +100,7 @@ Two things make this a *pinned* supply chain:
 - **`consume-pins.toml`** lists every artifact the bake pulls from the operator **artifact store** —
   the in-image binaries (recipes-app, fb-*, box-init, the dha tenant's
   creatine-serve/dha-orchestrator/epa, …), the service-manifest, and the vendored source drops — each
-  by sha256 (16 artifacts: 11 binary / 4 source / 1 config, across 6 owning repos). The bake verifies
+  by sha256 (the count and the split are `consume-pins.toml`'s). The bake verifies
   every input against this and **refuses on mismatch or absence**. The shas are copied from each owning
   repo's `published-pins.toml`.
 
@@ -138,8 +150,8 @@ key set (additive; safe to run over an existing cert set):
 cargo run -p orchard -- generate-keys --artifact-signing software
 ```
 
-> **Redelegate-before-build (update path).** A fresh key set mints all six purpose
-> delegations, including `UpdateImage`/`RootHash`. Any artifact key set minted **before**
+> **Redelegate-before-build (update path).** A fresh key set mints every purpose
+> delegation, including `UpdateImage`/`RootHash`. Any artifact key set minted **before**
 > the OS-update path (including the live box's) lacks those two — and since `orchard build`
 > bakes the `UpdateImage` delegation's `monotonic_ctr` as the image's `min_delegation_ctr`,
 > **every** build/sign on such a set fails closed with an actionable error. The one-command
@@ -193,8 +205,10 @@ cargo run -p orchard -- market upgrade --binary fb-acme \
 #                 box-init initramfs-init
 ```
 
-This is the general shape; a crate can carry its own feature/target requirements — each crate's
-`Cargo.toml` is authoritative.
+The dha-hosting box additionally needs the dha-tenant artifacts (the `creatine-serve`,
+`dha-orchestrator`, `epa` and `dha-*` entries in `consume-pins.toml`), published via grocer from
+their own provider repos (`../../creatine`, `../../dha`, `../../epa`). A default recipes box doesn't
+bake them, but `market verify --all` expects every entry in `consume-pins.toml` present.
 
 **The app tenant is bring-your-own.** The reference tenant (a private web app) is not published.
 The box hosts one application backend declared by the service-manifest — the `fb-manifest` crate
@@ -236,7 +250,7 @@ cargo run -p orchard -- build \
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--profile <path>` | none | a named box's whitelist TOML (`boxes/<name>.toml`) supplying `domain`/`net`/`keys_dir`/`out_dir` VALUES (see §5.1). Relaxes the clap-required `--domain`, re-enforced fail-closed post-merge. Deploy-only keys in it are ignored with a printed note. |
+| `--profile <path>` | none | a named box's whitelist TOML (`boxes/<name>.toml`) supplying the build VALUES it carries: `domain`, `net`, `keys_dir`, `out_dir`, `firmware`, `image_version`, `container_image`, `manifest`, `dha_weights_gguf` (see §5.1). Relaxes the clap-required `--domain`, re-enforced fail-closed post-merge. Deploy-only keys in it are ignored with a printed note. |
 | `--domain <d>` | *(required unless `--profile`)* | deployment domain, baked into the in-image haproxy cert path. RFC-1123 validated. |
 | `--out-dir <dir>` | `/tmp` | output directory for the image triple. |
 | `--keys-dir <dir>` | `~/.config/recipes-deploy/keys` | the operator key set from `generate-keys`. |
@@ -268,8 +282,10 @@ input. See §9.
 
 A **profile** is a small whitelist TOML that carries a box's stable build values so you type one
 intent, not a flag wall. `orchard build --profile boxes/rezepte.toml` supplies `domain`, `net`,
-`keys_dir`, and `out_dir`; a flag you ALSO pass on the command line WINS over the profile (flag >
-profile > built-in default). The schema is a strict whitelist (`deny_unknown_fields`) — an unknown key
+`keys_dir`, `out_dir`, `firmware`, `image_version`, `container_image`, `manifest` and
+`dha_weights_gguf`; a flag you ALSO pass on the command line WINS over the profile (flag >
+profile > built-in default). A profile written by `orchard guide` carries `image_version` and
+`firmware`, so a later `--profile` build takes them from there unless you type the flag. The schema is a strict whitelist (`deny_unknown_fields`) — an unknown key
 is a hard parse error, so a typo is loud, not silent.
 
 Two rules keep it safe:
@@ -291,6 +307,13 @@ the destructive wipe stays a live flag you type every time (it can never live in
 ```sh
 orchard prod 203.0.113.5 --profile boxes/rezepte.toml --wipe-confirmed
 ```
+
+**Profile schema version.** A profile may carry `schema_version`; absent means v1, so every
+profile written before this key existed stays valid. A profile written by a NEWER orchard refuses
+with a schema-skew message naming what to do. Known floor, stated because it cannot be fixed
+retroactively: an orchard binary predating this cycle does not know the key, so it reports the
+generic unknown-field parse error instead of the skew message. Upgrading the binary is what fixes
+the message; the refusal itself is correct either way.
 
 ### 5.2 Substrate — where the box will run
 
@@ -432,7 +455,7 @@ enrolled keys on the target. See the `boot-gate-uefi` target header in the `Make
 OVMF gate env.
 
 **Custom tenant** — `--manifest <path>` builds a non-recipes service topology from a TOML manifest
-(the §5.3 fail-closed schema; a malformed or privilege-escalating manifest is refused at bake). See
+(a malformed or privilege-escalating manifest is refused at bake). See
 `crates/image-builder/toy-tenant.toml` for a minimal worked example. Omitting `--manifest` builds the
 pinned recipes reference tenant, byte-identical to today's box.
 
@@ -544,6 +567,8 @@ do not flip it before then.
 | `config-virt not found in the pinned linux-virt apk` | the apk closure is stale — `refresh-apk-lock`. |
 | `docker build` fails on an apk version | a mirror superseded a pinned patch — bump the version in the Containerfile intentionally. |
 | `No space left on device` during cargo/kernel build | `/tmp` filled (needs ~15–20 GB). Clear leaked root-owned tempdirs: `docker run --rm -v /tmp:/t recipes-imgbuild:dev sh -c 'rm -rf /t/.tmp*'`. |
+| `repository-form-unmodelled` (guided ceremony) | the checkout's git configuration is not ratified, differs from the ratified declared space, or its ratified file cannot be read; the printed cure names the step (`orchard admit`, revert, or restore the file). `docs/guided-quickstart.md` § Stops about the checkout's form. |
+| `git-state-unreadable` … `bytes outside UTF-8` (guided ceremony) | a file name or configuration key in the checkout is outside UTF-8; the sample in the detail names it. Rename to UTF-8, re-run. |
 
 ### 9.1 Reclaim-tail manual disarm (rows `R-ARMED` / `R-DISARM`)
 
@@ -598,6 +623,17 @@ to the target.
 | `orchard vendor` | fetch + verify + unpack the pinned source drops into `vendor/`. |
 | `orchard sync-pins [--check]` | propagate `pins.toml` into the format-locked files. |
 | `orchard refresh-apk-lock` | regenerate `pinned-apks.toml` from `apk-world.toml`. |
+| `orchard market upgrade [--source <key> \| --binary <key> \| --config <key> \| --apks \| --kernel <version> \| --rust <version> \| --all] [--commit]` | re-pin a supply-chain leg (verify → stage → swap → authorize). |
+| `orchard guide <profile> [--repo-form-dir <dir>]` | the guided install ceremony: parameter interview, profile, one authorize, uninterrupted run. |
+| `orchard run <profile> --target <ip> [--repo-form-dir <dir>]` | re-run the ceremony over a saved profile; done steps SKIP. |
+| `orchard admit --box <profile> [--repo-form-dir <dir>]` | ratify a box's declared space: measure each named checkout's git configuration (every scope-qualified key; the value at the program-valued keys git executes inside the gate's commands), show the diff, write after an explicit typed authorize. Never runs a ceremony. Ratify after the first `guide` writes the profile, then before every `guide`/`run` and after any git configuration change; `docs/guided-quickstart.md` § Ratify the declared space. |
+| `orchard redelegate [--purpose all \| update-image \| root-hash \| weights]` | re-mint purpose delegations over the existing artifact root (§4.2, §13.2). |
+| `orchard update <host> --image <img> --identity <key> [--host-fingerprint SHA256:…]` | push a signed OS image to a running seabios-gpt box (§12). |
+| `orchard status <host> --ssh-identity <key> [--image <img>] [--keys-dir <dir>]` | read-only box inspection + drift comparison (§12, §13.3). |
+| `orchard rotate-key <host> --new-identity <new> --ssh-identity <current>` | rotate the operator SSH login key (§13.5). |
+| `orchard deploy-model <host> --model <gguf> --identity <key>` | push a signed model to a running runtime-weights box (a data hotswap; needs the `Weights` delegation: `orchard redelegate --purpose weights`). |
+| `orchard reclaim-tail <ip> --image <img> --ssh-identity <key>` | consent-gated offline shrink of a grown root, so the staging window lands in unpartitioned space (§9.1). |
+| `orchard market verify \| outdated \| store migrate` | the pin-store legs §8 describes. |
 | `orchard market store status [--all] [--full]` | the CAS reference scan — healthy bulk collapses to a count, anomalies itemize (see below). |
 | `orchard market store prune [--delete] [--full]` | reclaim unreferenced revisions (consent-gated; refuses on any scan doubt). |
 | `orchard update-cert-fingerprints …` | recompute pinned cert fingerprints after a rotation. |
@@ -615,7 +651,33 @@ sha digests ABBREVIATED to 12-hex (git-style, display-only — the full sha stil
 integrity decision). `--all` itemizes the healthy bulk too; `--full` restores the 64-hex digests;
 `restore-image --manifest-full` dumps every staged file.
 
-For the authoritative flag set, see `cargo run -p orchard -- <cmd> --help` and the source under
+**Batching across a fleet.** A serial one-host batch wrapper needs nothing this tool does
+not already provide: `--porcelain` gives one record per line, the exit classes distinguish
+done / refused / owed / failed, and the done-probes are convergent, so re-running a profile is
+safe and cheap. Records live operator-side under `$XDG_STATE_HOME/orchard/records/<name>.d/`; ARTIFACTS do not travel — so a second
+machine re-executes the artifact steps rather than trusting a record about bytes it cannot see.
+That is the behaviour, not a claim about it: the realizing arm is
+`ceremony_runner::step_done_is_identity_bound_and_re_executes_when_the_artifact_is_gone` (records
+intact, out_dir emptied ⇒ the step re-executes). Parallel batch and cross-host concurrency are
+out of scope here (spec Q2).
+
+**Invocation form.** Every command in this table, and every `next:` hint the tool prints, is written
+as `orchard <verb>`. Install the shim to make that form true from anywhere inside a checkout:
+
+```sh
+cargo build --release -p orchard-shim
+cp target/release/orchard-shim ~/.local/bin/orchard        # the shim installs UNDER the name `orchard`
+```
+
+The shim walks up from the working directory to the checkout, builds `orchard` once, and execs it
+with your argv — so signals, exit codes and the terminal all belong to the real binary. Bound
+(C8 debt 2): it still requires a CHECKOUT; outside one it refuses and says so. Six verbs read and
+never write, so you may also install them as ordinary binaries: `doctor`, `status`,
+`derive-rescue-offline`, `market verify`, `market outdated`, `market store status`. No
+artifact-producing verb is installable, because what it produces must be pinned to the checkout it
+was built from.
+
+For the authoritative flag set, see `orchard <cmd> --help` and the source under
 `crates/orchard/src/`. The gate discipline lives in the `Makefile` headers.
 
 ## 11. Backup + restore
@@ -647,6 +709,7 @@ an archive (the dd-only rule).
 
    ```
    orchard prod --image <img>.img --pubkey ~/.ssh/box_operator.pub \
+       --ssh-identity ~/.ssh/<the provisioning key> \
        --restore-from restore-<ts>.persist.img [--restore-min-ctr <printed-ctr>] \
        --wipe-confirmed <ip>
    ```
@@ -663,7 +726,7 @@ an archive (the dd-only rule).
    notes between the backup's origin version and the image you install — schema-forward is
    supported, schema-BACKWARD (an old app over a new db) is not.
 
-5. **Stale-restore caveat + the printed counter (§6e):** any validly-signed backup restores by
+5. **Stale-restore caveat + the printed counter:** any validly-signed backup restores by
    default — including an old one (a "rollback" to yesterday's data is a FEATURE of disaster
    recovery). If you specifically want to refuse anything older than your latest assembly, pass
    `--restore-min-ctr <the printed ctr>`: the box refuses a bundle whose delegation counter is
@@ -677,7 +740,7 @@ an archive (the dd-only rule).
    the tenant uid), so the assembler's uniform-owner default normally just works and its
    fail-loud on ambiguity is the exception path, not the norm.
 
-7. **mtime note (§3c):** restored files carry the fixed bake epoch, not their original
+7. **mtime note:** restored files carry the fixed bake epoch, not their original
    timestamps — the assembly is deterministic by construction. Original mtimes live in the
    retained daily tars; one more reason the pulls are kept, not rotated away after assembly.
 
@@ -784,10 +847,12 @@ but REQUIRED: any live-continuity path would honour attacker-reachable trust for
    --operator-pubkey <login.pub>` (stage the operator pubkey out-of-band), then `orchard sign-backup`
    under the new root. `prod`'s five-leg preflight fail-closes if the bundle `.sig` does not chain to the
    new anchor, so this MUST precede the takeover.
-4. Take over the box: `orchard prod --restore-from <image>` (add `--restore-min-ctr <N>` to pin the
-   anti-rollback floor). `/persist` is recovered from the backup, not carried in place — schedule a fresh
+4. Take over the box: `orchard prod <ip> --pubkey <login.pub> --ssh-identity <provisioning-key>
+   --restore-from <image>` (add `--restore-min-ctr <N>` to pin the anti-rollback floor), or pass a
+   `--profile` that carries the connection keys. `/persist` is recovered from the backup, not carried in place — schedule a fresh
    backup + a maintenance window.
-5. Confirm the flip: `orchard status --keys-dir <new>` shows the box now presents the NEW `anchor_sha256`
+5. Confirm the flip: `orchard status <box> --ssh-identity ~/.ssh/box_operator --keys-dir <new>`
+   shows the box now presents the NEW `anchor_sha256`
    — the ONLY supported confirmation the takeover took hold.
 6. THEN update operator-side trust: commit the new `pinned-artifact-root.toml`, run `orchard
    update-cert-fingerprints` if the X.509 set also rolled, re-sign retained backups with `orchard

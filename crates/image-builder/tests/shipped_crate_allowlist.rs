@@ -161,6 +161,7 @@ const WORKSPACE_SHIPPED: &[&str] = &[
     "once_cell",
     "opaque-debug",
     "orchard",
+    "orchard-shim",
     "p256",
     "password-hash",
     "pem",

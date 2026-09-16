@@ -18,15 +18,13 @@ pub fn next_steps(lines: &[String]) -> String {
     s
 }
 
-/// The two natural next commands after `orchard build`: boot-smoke it, then deploy it.
-pub fn build_next_steps(img: &Path) -> Vec<String> {
-    let img = img.display();
-    vec![
-        format!("orchard dryrun --image {img}    # boot-smoke it under QEMU"),
-        format!(
-            "orchard prod <ip> --image {img} --pubkey ~/.ssh/box_operator.pub --wipe-confirmed"
-        ),
-    ]
+/// The next commands after `orchard build`. RELOCATED to `ceremony::derive` (guided-ceremony
+                                                                                              
+/// baked DOMAIN CLASS: the hand-written version this replaces recommended a bare
+/// `orchard dryrun --image <img>`, which for a real-domain image boots a live `fb-acme` under open
+                                                                                         
+pub fn build_next_steps(img: &Path, domain: &str, repo_root: &Path) -> Vec<String> {
+    crate::ceremony::derive::build_next_steps(img, domain, repo_root)
 }
 
 /// After `generate-keys`: commit the trust anchors (else the next `build` refuses the dirty tree —
@@ -34,7 +32,7 @@ pub fn build_next_steps(img: &Path) -> Vec<String> {
 pub fn generate_keys_next_steps() -> Vec<String> {
     vec![
                                                                                                    
-                                                                                                
+                                                                                    
         "git add crates/image-builder/pinned-cert-fingerprints.toml && git commit -m 'pin cert fingerprints'   # so build won't refuse a dirty tree".into(),
         "orchard prime    # stage the pinned kernel + syslinux source".into(),
     ]
@@ -42,7 +40,7 @@ pub fn generate_keys_next_steps() -> Vec<String> {
 
 /// After `generate-keys --secure-boot`: commit the pinned PK/KEK/db fingerprints (else the next
 /// `build` refuses the dirty tree — the SAME footgun `generate_keys_next_steps` closes for the cert
-                                                                                                 
+                                                                                                  
 /// ceremony just wrote (echoed so the `git add` matches the path it printed).
 pub fn generate_keys_secure_boot_next_steps(db_path: &Path) -> Vec<String> {
     vec![
@@ -68,7 +66,7 @@ pub fn vendor_next_steps() -> Vec<String> {
 }
 
 /// After `sign-sb`: stage the installer USB carrying the signed loader. `img` = the just-signed
-                                                                                                  
+                                                                                                   
 /// hardware choice the tool can't know).
 pub fn sign_sb_next_steps(img: &Path) -> Vec<String> {
     vec![format!(
@@ -77,7 +75,7 @@ pub fn sign_sb_next_steps(img: &Path) -> Vec<String> {
     )]
 }
 
-                                                                                                    
+                                                                                                     
 /// (+ the PROD/RESCUE `_PRIVKEY`) with the built image path spliced in when known, `<img>`/`<privkey>`
 /// placeholders otherwise. The gate's own panic-if-unset discipline is untouched — this is the UX
 /// answer to the env surface, NOT a wrapper around the gate.
@@ -118,17 +116,31 @@ mod tests {
     }
 
     #[test]
-    fn build_next_steps_splice_the_real_image_path() {
-        let v = build_next_steps(std::path::Path::new("/tmp/recipes-image-abc.img"));
-        assert_eq!(v.len(), 2);
-        assert!(v[0].contains("orchard dryrun --image /tmp/recipes-image-abc.img"));
-        assert!(v[1].contains("orchard prod <ip> --image /tmp/recipes-image-abc.img --pubkey"));
+    fn build_next_steps_delegate_to_the_domain_class_rule() {
+                                                                                 
+                                                                                      
+        let v = build_next_steps(
+            std::path::Path::new("/tmp/recipes-image-abc.img"),
+            "box.test",
+                                                                                              
+                                                                           
+            std::path::Path::new("/nonexistent"),
+        );
+        assert!(!v.is_empty());
+        assert!(
+            v.iter().any(|l| l.contains("/tmp/recipes-image-abc.img")),
+            "the real image path is spliced: {v:?}"
+        );
+        assert!(
+            !v.iter().any(|l| l.contains("orchard dryrun")),
+            "the bare dryrun recommendation is gone: {v:?}"
+        );
     }
 
     #[test]
     fn generate_keys_next_reminds_to_commit_fingerprints() {
         let v = generate_keys_next_steps();
-                                                                                                  
+                                                                                      
                                                                                      
         assert!(
             v.iter().any(|l| l.contains("git commit")

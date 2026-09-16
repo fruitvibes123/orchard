@@ -1,10 +1,10 @@
-                                                                                
-//! mints the ed25519 root+worker pair + the six purpose-bound delegations in
+//! The software-rung artifact-signing ceremony (Spec 2 §3, cascade-everywhere):
+//! mints the ed25519 root+worker pair + the purpose-bound delegations in
 //! ONE pass. The root pubkey hex (`artifact-root.pub`) is THE operator pin;
-                                                                         
+                                                              
 //!
 //! On the software/docker rungs everything here lives on the operator host — the
-                                                                                
+                                                                     
 //! described as closing build-host compromise. The hardware rungs reuse the same
 //! bundle contract but sign on-device (C3/C4) and feed bundles in instead.
 //!
@@ -56,7 +56,7 @@ const ALL_PURPOSES: [Purpose; 7] = [
 ];
 
 /// The signing material the sign/preflight paths need: the public pin, the
-/// worker signing key, and the six stored (purpose-bound) delegation bundles.
+/// worker signing key, and the stored purpose-bound delegation bundles.
 /// The ROOT key is intentionally NOT loaded — artifact signing uses only the
 /// worker + the pre-signed delegations; the root file exists solely for a future
 /// re-delegation ceremony.
@@ -144,7 +144,7 @@ pub(crate) fn mint_delegation_bundle(
     bundle
 }
 
-                                                                                      
+                                                                                       
 /// checked window end `now + window_days·86400` — no silent saturate-to-never-expire.
 /// Shared by the keygen ceremony and `orchard redelegate`.
 pub(crate) fn delegation_window_end(now: u64, window_days: u64) -> Result<u64, DeployKeyError> {
@@ -169,11 +169,11 @@ fn io_err(path: &Path, source: std::io::Error) -> DeployKeyError {
     }
 }
 
-                                                                          
+                                                                           
 const PIN_FILE: &str = "artifact-root.pub";
 
 /// Max delegation window accepted at mint (~100 years). Whitelist the sane range
-                                                                              
+                                                                               
 /// delegation, an absurd value would silently never expire.
 const MAX_WINDOW_DAYS: u64 = 36_525;
 
@@ -184,7 +184,7 @@ const MAX_WINDOW_DAYS: u64 = 36_525;
 /// overwrite an existing artifact key set unless `force`. `window_days` is the
 /// delegations' validity window (now → now + window_days, `1..=MAX_WINDOW_DAYS`).
 ///
-                                                                                       
+                                                                           
 /// (0700) — NOT a sibling of it (a parent-sibling tempdir breaks the docker rung's `/keys`
 /// BIND MOUNT with a cross-device EXDEV rename; see the impl comment) — and renamed into
 /// `keys_dir` only after every write succeeds. An interrupted ceremony leaves `keys_dir`
@@ -329,7 +329,7 @@ pub fn read_updateimage_ctr(keys_dir: &Path) -> Result<Option<u64>, DeployKeyErr
     read_delegation_ctr(keys_dir, Purpose::UpdateImage)
 }
 
-                                                                                     
+                                                                         
 /// delegation bundle — always-unwrapped metadata — so the Docker arm (which loads no
 /// key set) sources it identically to the Host arm.
 pub fn read_weights_ctr(keys_dir: &Path) -> Result<Option<u64>, DeployKeyError> {
@@ -339,7 +339,7 @@ pub fn read_weights_ctr(keys_dir: &Path) -> Result<Option<u64>, DeployKeyError> 
 /// Read + parse the PUBLIC root-pin file (`artifact-root.pub`) → the 32-byte root
 /// pubkey. Public bytes: NO secret, NO passphrase — so the docker rung's host-side pin
 /// write reads the root pubkey through this even though the `.key` files are wrapped
-                                                                                 
+    
 pub fn read_root_pub(keys_dir: &Path) -> Result<[u8; 32], DeployKeyError> {
     let path = keys_dir.join(PIN_FILE);
     let pin_hex = String::from_utf8(std::fs::read(&path).map_err(|e| io_err(&path, e))?)
@@ -363,7 +363,7 @@ pub fn read_root_pub(keys_dir: &Path) -> Result<[u8; 32], DeployKeyError> {
 ///   32-byte raw seed ⇒ [`DeployKeyError::Unloadable`].
 ///
 /// `symlink_metadata` (lstat) FIRST — mirroring `artifact_verify::read_root_pin`
-                                                                                
+                                                                    
 /// wrongly read as "absent → skip"; lstat calls only a GENUINELY-absent path
 /// NotFound, so a broken key link becomes a hard read error, never a skip.
 pub fn load_worker_seed(
@@ -546,7 +546,7 @@ pub fn load_artifact_keys_with(
 }
 
 /// The `software` menu rung: mint the artifact key set + write the committed
-                                                                                
+                                                                     
 pub fn provision_software_rung(
     keys_dir: &Path,
     pin_path: &Path,
@@ -566,7 +566,7 @@ pub const IMGBUILD_TAG: &str = "recipes-imgbuild:dev";
 
 /// The in-container mount point of the operator keys dir. SINGLE source of truth so
 /// the `docker run -v <host>:<this>` mount target and the in-container
-/// `sign-in-container --keys-dir` default cannot drift apart (L-2): the host route
+/// `sign-in-container --keys-dir` default cannot drift apart: the host route
 /// never passes `--keys-dir`, so the in-container load relies on this default equalling
 /// the mount target — coupled by construction via this one const.
 pub const IN_CONTAINER_KEYS_DIR: &str = "/keys";
@@ -577,12 +577,12 @@ pub const IN_CONTAINER_KEYS_DIR: &str = "/keys";
 pub const IN_CONTAINER_OUT_DIR: &str = "/out";
 
 /// Resolve a mutable tag to its concrete, content-addressed image id
-                                                                               
-                                                                   
+                                                                                
+/// the `build_only_command` precedent). Every subsequent
 /// `docker run` in the operation uses the returned id verbatim, never
 /// re-dereferencing the tag, closing the intra-operation tag-substitution
 /// window. Fail-closed: an absent/uninspectable image is a refusal, never an
-                                     
+                         
 pub fn resolve_image_id(tag: &str) -> Result<String, DeployKeyError> {
     let out = std::process::Command::new("docker")
         .args(["image", "inspect", "--format", "{{.Id}}", tag])
@@ -690,7 +690,7 @@ fn docker_run_user() -> String {
     format!("{uid}:{gid}")
 }
 
-                                                                                    
+                                                                                     
 /// at-rest isolation — the in-container leg reads the operator passphrase and WRAPS the
 /// seeds (Argon2id→XChaCha20-Poly1305), so ONLY the ciphertext blob lands on the
                                                                           
@@ -699,16 +699,16 @@ fn docker_run_user() -> String {
 /// target dir. The in-container leg is **`--artifact-signing docker --artifact-keys-only`**
 /// — it mints + WRAPS the artifact key set to `/keys` and writes NOTHING to the RO repo
 /// (no cert bootstrap, no committed pin); the HOST writes the committed pin from the
-                                                                                              
+                                                                                  
 /// it is golden-testable; fails closed on a `:`-bearing path (breaks docker `-v`)
-                                       
+                           
 ///
-                                                                                 
-                                                                                
-                                                                         
+/// Docker-signer additions (spec §5/§6): runs by the RESOLVED `image_id` (never
+/// the mutable tag — spec §4); `-it` so the in-container process can read the
+                                                                          
 /// `--ulimit core=0` belt-and-suspenders beside the main() prctl guard — keygen
 /// holds fresh root+worker seeds + the passphrase, the same core-dump surface as
-                                               
+                                                
 pub fn docker_keygen_argv(
     image_id: &str,
     keys_dir: &Path,
@@ -716,6 +716,8 @@ pub fn docker_keygen_argv(
     force: bool,
 ) -> Result<Vec<String>, DeployKeyError> {
     require_resolved_image_id(image_id)?;
+                                                                                       
+    #[allow(clippy::disallowed_methods)]
     let repo = std::env::current_dir().map_err(|e| {
         DeployKeyError::Import(format!(
             "docker rung: cannot resolve the current dir for the /src repo mount: {e}"
@@ -723,8 +725,8 @@ pub fn docker_keygen_argv(
     })?;
                                                                                           
                                                                                           
-                                                                                         
-                                
+                                                                            
+                          
     reject_unclean_mount_path("--output-dir", keys_dir)?;
     let keys_s = keys_dir.display().to_string();
     let repo_s = repo.display().to_string();
@@ -749,7 +751,7 @@ pub fn docker_keygen_argv(
                                                                                              
         "--user".into(),
         docker_run_user(),
-                                                                          
+                                                             
                                                                   
         "--ulimit".into(),
         "core=0".into(),
@@ -800,11 +802,11 @@ pub fn docker_keygen_argv(
                                                                            
 /// RESOLVED `image_id` with the keys-dir mounted **read-only** at `/keys`
 /// (F-3 — sign never writes keys) and the outputs dir — NARROWED to the dir
-                                                                                
+                                                                                 
 /// at `/out` for the `.sig` sidecars. Inherits `docker_keygen_argv`'s
-                                                                          
+                                                              
 /// (the signer is `cargo run` from host source — the image pins the toolchain,
-                                                                              
+                                                                               
 /// host `target/`), `--bin orchard`. `-it` inherits the operator's TTY so the
 /// in-container process reads the passphrase itself with echo off (the host
 /// never buffers it, F-4); `--rm` destroys the container on exit; `--ulimit
@@ -819,6 +821,8 @@ pub fn docker_sign_argv(
     in_container_sign_args: &[String],
 ) -> Result<Vec<String>, DeployKeyError> {
     require_resolved_image_id(image_id)?;
+                                                                                       
+    #[allow(clippy::disallowed_methods)]
     let repo = std::env::current_dir().map_err(|e| {
         DeployKeyError::Import(format!(
             "docker rung: cannot resolve the current dir for the /src repo mount: {e}"
@@ -973,7 +977,7 @@ fn plan_container_sign(
 /// process reads the passphrase itself, echo off — the host NEVER buffers it,
 /// §5/F-4), and return the `.sig` sidecar paths. Fail-CLOSED: a non-sibling artifact
 /// set, an absent/unresolvable image, a spawn failure, or a non-zero container exit
-                                                                               
+                                                                   
 /// operator-host orchestration; the box never signs.
 pub fn docker_sign_artifacts(
     keys_dir: &Path,
@@ -1122,7 +1126,7 @@ mod tests {
 
     #[test]
     fn read_weights_ctr_is_fail_closed_tri_state() {
-                                                                                                  
+                                                                                      
                                                                                                
                                                               
                                                                                   
@@ -1309,7 +1313,7 @@ mod tests {
             !joined.contains("--bin admin "),
             "must not use the wrong bin name"
         );
-                                                                                                 
+                                                                                    
         assert!(joined.contains(
             "generate-keys --output-dir /keys --artifact-signing docker --artifact-keys-only"
         ));
@@ -1517,7 +1521,7 @@ mod tests {
     fn docker_host_side_pin_write_after_keysonly_mint() {
                                                                                             
                                                                                              
-                                                                                    
+                                                                       
         let dir = tempfile::tempdir().unwrap();
         let keys = dir.path().join("keys");
         let pin = dir.path().join("pinned-artifact-root.toml");

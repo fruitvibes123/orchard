@@ -109,7 +109,12 @@ fn eco(fx: &Fx, keyring_sha: &str) -> Eco {
     }
     let manifest = RepoManifest::load(&orchard.join("repo-manifest.toml")).unwrap();
     let store = tmp.path().join("eco/artifact-store");
-    let layout = resolve_layout(&manifest, orchard, store);
+    let layout = resolve_layout(
+        &manifest,
+        orchard.clone(),
+        store,
+        orchard.join("repo-manifest.toml"),
+    );
     Eco {
         _tmp: tmp,
         layout,

@@ -8,6 +8,7 @@
 # Both remain as standalone targets.
 verify: pins-check lint
 	cargo test --workspace
+	$(MAKE) ceremony-hostcfg
 	$(MAKE) crux-orchard
 	$(MAKE) cmdline-lock
 	$(MAKE) crypto-sentry
@@ -23,6 +24,65 @@ verify: pins-check lint
 # explicit `--allow-missing <repo>` (incl. `cert-trail` when the cookbook launchpad is absent), never a
 market-verify:
 	cargo run -p orchard -- market verify
+
+# Guided-ceremony seeded-violation drives (each EXPECTS a red — a seed that passes is the
+# failure). Not part of `verify` (three extra feature builds); run at dev + audit checkpoints.
+.PHONY: ceremony-seeds
+ceremony-seeds:
+	@echo "seed 1/3: compose-yes must COMPILE then redden compositions_stay with ITS OWN violation"
+	@cargo test -q -p orchard --features ceremony-seed-compose-yes --test ceremony_selftests --no-run >/dev/null 2>&1 \
+		|| { echo "ERROR: the compose-yes seed does not compile — the gate cannot tell a red arm from a broken build"; exit 1; }
+	@out="$$(cargo test -q -p orchard --features ceremony-seed-compose-yes --test ceremony_selftests compositions_stay 2>&1)"; rc=$$?; \
+		if [ $$rc -eq 0 ]; then echo "ERROR: the compose-yes seed did NOT redden its arm"; exit 1; fi; \
+		echo "$$out" | grep -q "has forbidden class ConsentBearing" \
+			|| { echo "ERROR: compositions_stay reddened for the WRONG reason (not the seeded --yes composition) — a seed-cfg-confined unrelated failure greens a false negative"; echo "$$out" | tail -20; exit 1; }
+	@echo "seed 2/3: unclassified-flag must COMPILE then redden flag_classification with ITS OWN violation"
+	@cargo test -q -p orchard --features ceremony-seed-unclassified-flag --test ceremony_selftests --no-run >/dev/null 2>&1 \
+		|| { echo "ERROR: the unclassified-flag seed does not compile — the gate cannot tell a red arm from a broken build"; exit 1; }
+	@out="$$(cargo test -q -p orchard --features ceremony-seed-unclassified-flag --test ceremony_selftests flag_classification 2>&1)"; rc=$$?; \
+		if [ $$rc -eq 0 ]; then echo "ERROR: the unclassified-flag seed did NOT redden its arm"; exit 1; fi; \
+		echo "$$out" | grep -q "ceremony-seed-unclassified" \
+			|| { echo "ERROR: flag_classification reddened for the WRONG reason (not the seeded flag)"; echo "$$out" | tail -20; exit 1; }
+	@echo "seed 3/3: unclassified-verb must fail the BUILD with ITS OWN non-exhaustive-match error"
+	@out="$$(cargo build -q -p orchard --features ceremony-seed-unclassified-verb 2>&1)"; rc=$$?; \
+		if [ $$rc -eq 0 ]; then echo "ERROR: the unclassified-verb seed did NOT fail the build"; exit 1; fi; \
+		echo "$$out" | grep -q "CeremonySeedUnclassified" \
+			|| { echo "ERROR: the unclassified-verb build failed for the WRONG reason (not the seeded verb's non-exhaustive match)"; echo "$$out" | tail -20; exit 1; }
+	@echo "ceremony-seeds: OK (each seed reddens for its OWN seeded violation, verified by message)"
+
+# Guided-ceremony floor row D'1: the R16 battery green under a non-empty host global and system git
+# config, serially and (the declared-space family) at default parallelism (code-phaseR-r16-FLOOR5.md residuals 5, 9).
+.PHONY: ceremony-hostcfg
+CEREMONY_BATTERY := --lib --test ceremony_runner --test ceremony_selftests --test ceremony_gate \
+	--test ceremony_interview --test ceremony_process_exec --test context_matrix \
+	--test ceremony_gate_commit --test ceremony_declared_space --test ceremony_typed_cure \
+	--test ceremony_path_render --test ceremony_declared_value --test ceremony_git_runner \
+	--test ceremony_utf8_argv --test ceremony_floor_isolation
+CEREMONY_BATTERY_TARGETS := 15
+CEREMONY_PARALLEL := --test ceremony_declared_space --test ceremony_declared_value \
+	--test ceremony_floor_isolation --test ceremony_git_runner --test ceremony_utf8_argv
+CEREMONY_PARALLEL_TARGETS := 5
+ceremony-hostcfg:
+	@d=$$(mktemp -d) || exit 1; \
+	printf '[hostglob]\n\tkey = 1\n' > $$d/global; \
+	printf '[hostsys]\n\tkey = 1\n' > $$d/system; \
+	fail() { echo "$$1"; printf '%s\n' "$$2" | grep -E '^test result|^ +[a-z_]+$$|panicked at' | head -40; rm -rf $$d; exit 1; }; \
+	out=$$(GIT_CONFIG_GLOBAL=$$d/global GIT_CONFIG_SYSTEM=$$d/system \
+		cargo test -q -p orchard --no-fail-fast $(CEREMONY_BATTERY) -- --test-threads=1 2>&1) || \
+		fail "ERROR: ceremony-hostcfg serial failed under a host global+system git config" "$$out"; \
+	n=$$(printf '%s\n' "$$out" | grep -c '^test result: ok\.'); \
+	[ "$$n" = "$(CEREMONY_BATTERY_TARGETS)" ] || \
+		fail "ERROR: ceremony-hostcfg serial reported $$n green targets, not $(CEREMONY_BATTERY_TARGETS) — refusing a false green" "$$out"; \
+	echo "ceremony-hostcfg serial: $$n/$(CEREMONY_BATTERY_TARGETS) targets green under a host global+system git config"; \
+	out=$$(GIT_CONFIG_GLOBAL=$$d/global GIT_CONFIG_SYSTEM=$$d/system \
+		cargo test -q -p orchard --no-fail-fast $(CEREMONY_PARALLEL) 2>&1) || \
+		fail "ERROR: ceremony-hostcfg parallel failed under a host global+system git config" "$$out"; \
+	n=$$(printf '%s\n' "$$out" | grep -c '^test result: ok\.'); \
+	[ "$$n" = "$(CEREMONY_PARALLEL_TARGETS)" ] || \
+		fail "ERROR: ceremony-hostcfg parallel reported $$n green targets, not $(CEREMONY_PARALLEL_TARGETS) — refusing a false green" "$$out"; \
+	echo "ceremony-hostcfg parallel: $$n/$(CEREMONY_PARALLEL_TARGETS) declared-space-family targets green at default parallelism"; \
+	rm -rf $$d; \
+	echo "ceremony-hostcfg: OK (the R16 battery is green under a host git config serially, and the declared-space family at default parallelism)"
 
 # Orchard's per-repo pin generator is the existing `orchard sync-pins` (renders
 # rust-toolchain.toml + syncs the image-builder Containerfile FROM from THIS repo's pins.toml).
@@ -155,7 +215,7 @@ boot-gate:
 	# KEYS_DIR is the artifact key set the .img baked as /etc/recipes/artifact-root.pub (the restore
 	# trust anchor) — env-PANICs if unset. The 4 cases run in ONE #[test], so "1 passed"-GUARD it (the
 	# M-α false-green guard, like the grocer/dryrun gates above): a deleted/un-ignored test → 0 tests →
-	# `cargo test` exits 0 with the gate never running; the grep refuses that silent skip (audit L-1).
+	# `cargo test` exits 0 with the gate never running; the grep refuses that silent skip.
 	@out=$$(cargo test -p orchard --test deploy_restore_smoke -- --ignored --nocapture 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "test result: ok. 1 passed" || { echo "ERROR: restore-from gate did not run (deleted? un-ignored? filter stale) — refusing a false green"; exit 1; }
@@ -180,6 +240,41 @@ boot-gate:
 # because it needs its OWN `.img` (built `orchard build --manifest crates/image-builder/toy-tenant.toml`)
 # at RECIPES_TOY_DRYRUN_IMG. Name-filtered + "1 passed"-guarded (same M-α false-green guard as above).
 .PHONY: boot-gate-toy
+.PHONY: boot-gate-ceremony-legs
+# boot-gate-ceremony-legs — the LEG composition a ceremony's S8 runs. Separate from
+# `boot-gate-ceremony` on purpose, and it is what the e2e fixture profile names as its
+# `gate_target`: the e2e leg RUNS a ceremony, whose S8 invokes the gate target its profile names,
+# so an e2e that named the target containing itself would recurse forever. the e2e's
+# "never re-enters the battery containing itself" is exactly this, and
+# `ceremony_gate::the_e2e_fixture_never_names_a_gate_target_containing_itself` holds it.
+boot-gate-ceremony-legs:
+	@echo "boot-gate-ceremony-legs: needs /dev/kvm + RECIPES_{DRYRUN,PROD}_IMG (+ _PRIVKEY) built from ONE ceremony."
+	@out=$$(RECIPES_GATE_TARGET=boot-gate-ceremony-legs cargo test -p orchard --test deploy_dryrun -- --ignored --nocapture dryrun_boots_to_working_runtime 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "test result: ok. 1 passed" || { echo "ERROR: ceremony dryrun leg did not run (renamed? filter stale) — refusing a false green"; exit 1; }
+	@out=$$(RECIPES_GATE_TARGET=boot-gate-ceremony-legs cargo test -p orchard --test deploy_prod_qemu -- --ignored --nocapture installed_disk_boots_through_seabios_to_working_runtime 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "test result: ok. 1 passed" || { echo "ERROR: ceremony installed-disk leg did not run (renamed? filter stale) — refusing a false green"; exit 1; }
+	@echo "boot-gate-ceremony-legs: OK (the declared composition booted the produced bytes)."
+
+.PHONY: boot-gate-ceremony
+# boot-gate-ceremony — the guided ceremony's OWN S8 composition.
+# REDUCED on purpose: the ceremony gate proves the produced bytes boot, it does not re-run the full
+# battery (that is `make boot-gate`). Every invocation here is `--test`-scoped AND name-filtered, so
+# the declared leg set is derivable from this recipe alone — `ceremony::leg_registry::composition_of`
+# refuses a target whose leg set depends on a test binary's own ignored set, and the agreement arm
+# in `make verify` parses THIS target. Each leg emits its row into `<img>.gate-record.toml` on pass;
+# the runner copies the finished record beside the profile at S8 completion.
+# The e2e binary joins this recipe in Task 11.
+boot-gate-ceremony:
+	@echo "boot-gate-ceremony: needs /dev/kvm + RECIPES_{DRYRUN,PROD}_IMG (+ _PRIVKEY) built from ONE ceremony."
+	$(MAKE) boot-gate-ceremony-legs
+	@echo "boot-gate-ceremony: the end-to-end ceremony — needs RECIPES_CEREMONY_{IMG,PRIVKEY} + RECIPES_PROD_E2E_DEBIAN_IMG + cloud-localds."
+	@out=$$(cargo test -p orchard --test deploy_ceremony_e2e -- --ignored --nocapture the_ceremony_installs_a_serving_box_from_a_profile_on_produced_bytes 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "test result: ok. 1 passed" || { echo "ERROR: the ceremony e2e did not run (renamed? filter stale) — refusing a false green"; exit 1; }
+	@echo "boot-gate-ceremony: OK (the ceremony's declared composition booted the produced bytes)."
+
 boot-gate-toy:
 	@echo "boot-gate-toy: needs RECIPES_TOY_DRYRUN_IMG (a toy --manifest .img) + /dev/kvm."
 	@out=$$(cargo test -p orchard --test deploy_dryrun -- --ignored --nocapture toy_manifest_boots_to_running_services 2>&1); \
@@ -204,7 +299,23 @@ boot-gate-acme:
 	{ [ $$rc -eq 0 ] && echo "$$out" | grep -q "test result: ok. 1 passed"; } || { echo "ERROR: acme-lifecycle gate did not run or did not pass (cargo rc=$$rc) — refusing a false green"; exit 1; }
 	@echo "boot-gate-acme: OK (renewer + watcher cert lifecycle proven on produced bytes)."
 
-# boot-gate-lifecycle — the lifecycle produced-bytes gate: INSTALLS a
+# boot-gate-persist — the persist trust-file self-heal produced-bytes gate (Leg C
+# + the ca.crt re-derive leg; Legs A + B not built): boots a from-pins reference
+# box, corrupts full.pem (torn, then valid-cert-wrong-marker) and ca.crt over root SSH with a
+# read-back, reboots from the same /persist, and asserts the heal (haproxy :443 leaf regenerates;
+# ca.crt re-derives to the same identity, the box reaches services). SEPARATE from boot-gate because it needs its OWN reference .img carrying
+# the persist-selfheal binaries at RECIPES_PERSIST_IMG (host tools qemu/ssh/openssl + /dev/kvm; NO
+# docker — -kernel boot). ONE #[test], DOUBLE-guarded like boot-gate-acme: cargo's exit 0 AND the
+# "1 passed" grep (the M-alpha false-green guard: 0 tests still exits 0, so the grep refuses a skip).
+.PHONY: boot-gate-persist
+boot-gate-persist:
+	@echo "boot-gate-persist: needs RECIPES_PERSIST_IMG (a from-pins reference .img) + /dev/kvm + host openssl. RUN FOREGROUND (Leg C 3 boots, Leg D 2)."
+	@out=$$(cargo test -p orchard --test deploy_persist_selfheal -- --ignored --nocapture 2>&1); rc=$$?; \
+	echo "$$out"; \
+	{ [ $$rc -eq 0 ] && echo "$$out" | grep -q "test result: ok. 1 passed"; } || { echo "ERROR: persist self-heal gate did not run or did not pass (cargo rc=$$rc) — refusing a false green"; exit 1; }
+	@echo "boot-gate-persist: OK (torn full.pem + ca.crt heal on produced bytes)."
+
+# boot-gate-lifecycle — the Phase-5a lifecycle produced-bytes gate: INSTALLS a
 # seabios-gpt A/B .img to a real GPT disk (the dd-only installer), boots the INSTALLED disk through SeaBIOS,
 # and drives `orchard status` (drift compare + read-only) + the rotate-key state machine (round-trip, 0644
 # root:root, never-locked-out) against the LIVE box over real SSH. SEPARATE from `boot-gate` because it needs
@@ -346,12 +457,12 @@ boot-gate-seabios-gpt-e2e:
 #
 # SEPARATE from `boot-gate` because it needs its OWN `.img`: `boot-gate`'s RECIPES_PROD_IMG is a plain
 # reference box, and one env cannot be both. Build it:
-#   RECIPES_DHA_WEIGHTS_GGUF=<qwen3-vl-2b-instruct-q4km.gguf> cargo run -p orchard -- build \
+#   cargo run -p orchard -- build --dha-weights-gguf <qwen3-vl-2b-instruct-q4km.gguf> \
 #     --firmware seabios-gpt --domain prod.test --manifest crates/image-builder/prod-cotenant.toml \
 #     --operator-pubkey <key.pub> --recovery-pubkey <key.pub> \
 #     --net "mode=static;ip=10.0.2.15/24;gw=10.0.2.2;dns=10.0.2.3" --out-dir <dir> --allow-dirty
-# (the mmproj is picked up beside the model GGUF by its pinned name, or point RECIPES_DHA_MMPROJ_GGUF at
-# it; both shas are verified fail-closed at bake), then
+# (the mmproj is picked up beside the model GGUF by its pinned name, or pass --dha-mmproj-gguf;
+# both shas are verified fail-closed at bake; the guided ceremony retired the env form), then
 #   RECIPES_PROD_WEIGHTS_IMG=<dir>/<img>.img RECIPES_PROD_WEIGHTS_PRIVKEY=<key> \
 #   RECIPES_PROD_E2E_DEBIAN_IMG=<debian.qcow2>
 # Name-filtered + "1 passed"-guarded (the M-alpha false-green guard). The harness ALSO refuses, before
@@ -366,9 +477,9 @@ boot-gate-prod-weights:
 	@echo "boot-gate-prod-weights: OK (the prod co-tenant image, unbufferable in guest RAM, installed by the streaming ceremony)."
 
 # from `boot-gate` because it needs its OWN dha `.img`: a `--firmware seabios-gpt --manifest
-# crates/image-builder/dha-tenant.toml` build with RECIPES_DHA_WEIGHTS_GGUF set (bakes the 5th GPT
-# weights partition). Build it:
-#   RECIPES_DHA_WEIGHTS_GGUF=<qwen2.5-coder-1.5b-q2_k.gguf> cargo run -p orchard -- build --firmware seabios-gpt \
+# crates/image-builder/dha-tenant.toml` build with `--dha-weights-gguf` (bakes the 5th GPT
+# weights partition; the guided ceremony retired the env form). Build it:
+#   cargo run -p orchard -- build --dha-weights-gguf <qwen2.5-coder-1.5b-q2_k.gguf> --firmware seabios-gpt \
 #     --domain dha.test --manifest crates/image-builder/dha-tenant.toml --operator-pubkey <key.pub> \
 #     --net "mode=static;ip=10.0.2.15/24;gw=10.0.2.2;dns=10.0.2.3" --out-dir <dir> --allow-dirty
 # boot-gate-dha — the dha AI-tenant confinement produced-bytes gate. Build the dha .img first,

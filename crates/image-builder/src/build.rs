@@ -2,7 +2,7 @@
 //!
 //! Wires Phase-1's components into the end-to-end build, emitting the **unsigned**
 //! triple `recipes-image-<sha>.{img,layout.toml,sha256}` (the `.img` CMS `.sig` is
-                                                                       
+                                                                        
 //!
 //! The external-tool steps (musl binary build, evmctl IMA/EVM sign, abuild kernel
 //! build, mksquashfs, veritysetup, initramfs cpio) sit behind the [`BuildTools`]
@@ -44,7 +44,7 @@ pub const OS_BINS: &[&str] = &[
 /// (each service's `Exec`/`PeriodicLoop` binary, each boot-hook binary, and the runtime-config client
 /// program) whose parent dir is exactly `/usr/bin`. Deduped by the `BTreeSet` (a tenant bin already in
 /// `OS_BINS` — e.g. the recipes service's `/usr/bin/recipes` — is not double-listed). `build_binaries`
-                                                                                                          
+                                                                                                           
 /// tenant binary (the toy, whose `widget` is `/bin/busybox`) yields EXACTLY `OS_BINS`.
 pub fn staged_usr_bin_names(manifest: &fb_manifest::ValidatedManifest) -> BTreeSet<String> {
     use fb_manifest::manifest::ServiceShape;
@@ -278,7 +278,7 @@ pub trait BuildTools {
     /// Stage the in-image `/usr/bin` binaries into `staging` from the pinned store: [`OS_BINS`] ∪ the
     /// manifest's tenant bins ([`staged_usr_bin_names`]) ∪ `extra_bins` (hotswap v4: `fb-weights` on a
     /// RuntimeRecord build — anchor-conditional so every other shape stays byte-identical). Each is
-                                                                                                   
+                                                                                                    
     /// pinned binary IS the artifact).
     fn build_binaries(
         &self,
@@ -288,7 +288,7 @@ pub trait BuildTools {
     ) -> Result<(), BuildError>;
                                                                                                             
     /// onto `staging` under `/opt/<dir>/…` with escape-proof semantics + the declared mode/owner. Returns
-                                                                                                           
+                                                                                                            
     fn stage_manifest_files(
         &self,
         staging: &Path,
@@ -410,7 +410,7 @@ pub trait BuildTools {
     ) -> Result<Vec<u8>, BuildError>;
     /// Bake the persist-skeleton (O3). A SMALL fixed-size ext4 image (= [`PERSIST_SKELETON_SIZE_BYTES`]),
     /// labelled `persist` (M-1 — the box mounts by `LABEL=persist`), carrying the operator pubkey at
-                                                                                                  
+                                                                                                   
     /// skeleton dirs. The box `resize2fs`-grows it to the full persist partition on first boot. An empty
     /// `operator_pubkey` bakes an un-loginable skeleton (mirrors the recovery-pubkey placeholder).
     /// Byte-reproducible (root-owned inodes, fixed UUID/seed).
@@ -453,7 +453,7 @@ pub trait BuildTools {
 /// the `RECIPES_DHA_WEIGHTS_GGUF` env + [`crate::models::Models`] pin; `build()` re-hashes the file
 /// against `sha256` FAIL-CLOSED before any expensive work — the load-bearing integrity layer (a direct
 /// lib caller bypasses the CLI, so the gate lives here too, the domain/net belt-and-suspenders class).
-                                                                                                        
+                                                                                                         
 /// no cmdline tokens). The multi-GiB GGUF is referenced by PATH (staged by the tool), never held in a `Vec`.
 #[derive(Debug, Clone)]
 pub struct WeightsInput {
@@ -492,7 +492,7 @@ pub struct BuildConfig {
     pub alpine_version: String,
     pub domain: String,
     /// sha256(image-signing cert DER), hex — part of the rescue-seed IKM (F-mini-11).
-                                                                                        
+                                                                                         
     /// from the actual image-signing cert / the pinned-cert-fingerprints.toml
     /// `[image_signing]` value (sans `sha256:`), NOT pass a hand-built string — a
     /// wrong-but-valid 64-hex value silently changes the rescue seed → TOFU break. The
@@ -537,16 +537,16 @@ pub struct BuildConfig {
     /// `--manifest`, or the pinned reference tenant). The §5.3 fail-closed gate already ran
     /// (`config::load_manifest`) — the renderer only ever sees a `ValidatedManifest`. This is the
     /// de-hardcoding's completion: the topology is build-INPUT data, not a compiled-in const
-                                                                                      
+                                                                                       
     pub manifest: fb_manifest::ValidatedManifest,
     /// dha Component E (O4=(a) GPT): the resolved + pinned weights GGUF, or `None` for a non-dha image.
     /// `Some` ⇒ `build()` verifies the GGUF sha256 fail-closed, bakes it into a squashfs+dm-verity 5th
     /// GPT partition, and anchors it per [`Self::weights_anchor`]. `None` ⇒ byte-identical to a plain
-                                                                                                              
+                                                                                                               
     pub weights: Option<WeightsInput>,
     /// Hotswap v4 (§7 decouple): HOW a weights build anchors the model's trust. `BootCmdline` = the
     /// dha boot-anchored shape (the `fb.weights-*` triple; byte-identical to pre-v4). `RuntimeRecord`
-                                                                                                     
+                                                                                                      
     /// the whole no-brick premise), a SIGNED weights record baked at `/persist/weights/current`, the
     /// engine run-script gains the `fb-weights setup` prelude, and the swap runbook files are baked.
     /// Ignored when [`Self::weights`] is `None` — except `RuntimeRecord`, which then fails the build
@@ -578,7 +578,7 @@ pub enum WeightsAnchor {
     /// The dha boot-anchored shape: the `fb.weights-*` cmdline triple, weights in the boot chain
     /// (initramfs fatal-mounts the volume pre-`switch_root`). The pre-v4 default — byte-identical.
     BootCmdline,
-                                                                                               
+                                                                                                
     /// baked into the persist skeleton at `weights/current`; `EngineWeightsSetup::Runtime` rendered
     /// into the engine's run script; the `weights-engine`/`weights-health` runbook files baked.
     RuntimeRecord(WeightsRecordInputs),
@@ -629,11 +629,11 @@ pub struct BuildOutputs {
 
 /// Orchestrate the build (steps 2-13, sign deferred). Fail-closed: any step's error
 /// aborts; the staging tempdir is RAII-cleaned on every exit path.
-                                                                                                   
+                                                                                                    
 /// The CANONICAL phase-banner sequence. `run_phase_banners_for_test` replays it, and `build()`'s
 /// real (hand-authored) `phase_banner` call sites are asserted to MATCH it by the capture test
 /// `build_real_emission_matches_build_phase_names` (which taps `build()`'s actual emissions via
-                                                                                                    
+                                                                                                     
 /// this list to dispatch (the banners interleave with real bake calls); the capture test is what
 /// binds them. `firmware` is accepted for future arms (unused today — both arms emit this order).
 ///
@@ -660,7 +660,7 @@ pub fn build_phase_names(_firmware: Firmware, weights: bool) -> Vec<&'static str
     v
 }
 
-                                                                                                 
+                                                                                                  
 pub fn run_phase_banners_for_test(
     firmware: Firmware,
     weights: bool,
@@ -681,9 +681,9 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-                                                                                                     
+                                                                                                      
 /// capture change): `=== {name} (+{elapsed-so-far}s) ===` — the CUMULATIVE wall-time since
-                                                                                                     
+                                                                                                      
 /// delta state). The final total line is emitted once by [`build`] after the match, not a phase.
 pub(crate) fn phase_banner(name: &str, build_start: std::time::Instant) {
     eprintln!("=== {name} (+{}s) ===", build_start.elapsed().as_secs());
@@ -1172,7 +1172,7 @@ struct WeightsBake {
     verity_root_hash: String,
 }
 
-                                                                                                    
+                                                                                                     
 /// GGUF sha256 was already verified fail-closed at the TOP of [`build()`]; here we pack the single-file
 /// `model.gguf` squashfs (NO IMA — data, not exec), build its dm-verity tree, and wrap the two into a
 /// component exactly like the rootfs. Firmware-independent (the render + assemble differ by arm, the
@@ -1306,7 +1306,7 @@ fn verify_one_gguf(path: &Path, want_sha: &str, want_bytes: u64) -> Result<(), B
 
 /// H-1: confirm the `fb.verity-hash-offset` baked into slot A's APPEND equals the `.img` layout's
 /// rootfs verity offset. Both derive from `rootfs.verity_hash_offset` today, so this is the
-                                                                                                 
+                                                                                                  
 /// render/assemble divergence fails the build LOUD rather than shipping a boot-looping image. Parses
 /// the value ACTUALLY in the APPEND (not the input), so it also catches a render bug. Fails closed if
 /// the field is missing.
@@ -1342,7 +1342,7 @@ fn check_baked_verity_offset(cmdline_carrier: &str, layout_offset: u64) -> Resul
     Ok(())
 }
 
-                                                                                                           
+                                                                                                            
 /// unpadded squashfs but the runtime + the rescue-key recompute hash the PADDED squashfs, and they agree
 /// ONLY because mksquashfs 4 KiB-aligns its output. Assert it so a future mksquashfs change fails the
 /// build LOUD rather than silently desyncing the root hash → an unbootable image / a wrong rescue-key
@@ -1366,7 +1366,7 @@ fn assert_squashfs_block_aligned(len: usize) -> Result<(), BuildError> {
                                                                                                 
                                      
 
-                                                                                                          
+                                                                                                           
 /// PRODUCED bytes, like the H-1 verity tripwire, independent of HOW a journal might have got there. The
 /// ext4 superblock is at byte 1024; `s_feature_compat` (`__le32`) at offset 0x5C; `HAS_JOURNAL` = 0x0004.
 /// box-init's `prepare-persist` gates the first-boot grow + journal-add on journal-ABSENCE, so a journaled
@@ -1390,7 +1390,7 @@ fn check_persist_skeleton_no_journal(persist: &[u8]) -> Result<(), BuildError> {
 /// Render the static in-image config files into the staging tree (build-pipeline
 /// step 6). Whitelist-shaped (no operator-mutable config). The forbidden-component
 /// and dropbear-no-PAM build-time CHECKS run separately in [`run_hardening_checks`]
-                                                                                    
+                                                                                     
 fn render_configs(
     staging: &Path,
     domain: &str,
@@ -1565,7 +1565,7 @@ fn symlink_in(staging: &Path, rel: &str, target: &str) -> Result<(), BuildError>
 }
 
 /// Build-time hardening assertions over the staged tree (spec defense layers 6/7,
-                                                                               
+                                                                                
 /// systemd / package-manager / PAM) + the dropbear-links-no-PAM `ldd` check. Fails
 /// the build (fail-closed) on any violation.
 fn run_hardening_checks<T: BuildTools>(root: &Path, tools: &T) -> Result<(), BuildError> {
@@ -1741,7 +1741,7 @@ mod tests {
         /// `Some(WeightsCmdline)` into the render, not only into `assemble_img`).
         boot_fs_extlinux: RefCell<Option<String>>,
         /// Whether the rootfs staging carried the empty `/models` weights mount dir at `pack_squashfs`
-                                                                                         
+                                                                                          
         models_dir_staged: RefCell<bool>,
         /// The `.config` `build_kernel` returns — the C3 CONFIG-assert runs the firmware-derived
         /// substrate union over it, so a bare-metal (UEFI) build needs a USB-inclusive `.config`.
@@ -1783,7 +1783,7 @@ mod tests {
             )
         }
         /// C3: override the `.config` `build_kernel` yields, so a test can drive the SUBSTRATE
-                                                                                
+                                                                                 
         fn with_dot_config(self, c: &str) -> Self {
             Self {
                 dot_config: c.to_string(),
@@ -2179,6 +2179,7 @@ mod tests {
         };
         let kernel = KernelConfigPins {
             exact_match: vec!["CONFIG_IMA=y".into()],
+            observe_exact: vec![],
             prefix_match: vec![],
             forbidden: vec![],
             forbidden_prefix: vec![],
@@ -2250,7 +2251,7 @@ mod tests {
         );
     }
 
-                                                                                                     
+                                                                                                      
     /// via `BANNER_TAP`) equal `build_phase_names` — the drift-proof guard the replay-only
     /// `build_emits_the_full_phase_banner_sequence` lacks. A seabios (non-dha) build; the conditional
     /// weights banner is covered by the weights-arm test + `build_phase_names(_, true)`.
@@ -2453,7 +2454,7 @@ mod tests {
         c
     }
 
-                                                                                               
+                                                                                                
     /// weights component into the layout but renders NO `fb.weights-*` cmdline token (the initramfs
     /// fatal-mount skip — the whole no-brick premise), threads `EngineWeightsSetup::Runtime` into
     /// the servicedir render, bakes the two runbook files, and hands the persist skeleton the
@@ -2567,7 +2568,7 @@ mod tests {
         ));
     }
 
-                                                                                                        
+                                                                                                         
     /// packer, and it must be held to the same fail-closed sha gate as the text half. A silently-dropped
     /// mmproj would still produce a valid single-file volume and a green build, so this asserts the
     /// pair-ness explicitly rather than inferring it from success.
@@ -3002,6 +3003,7 @@ mod tests {
         let apk_pins = pins().0;
         let bad_kernel_pins = KernelConfigPins {
             exact_match: vec!["CONFIG_SECURITY_LOCKDOWN_LSM=y".into()],                           
+            observe_exact: vec![],
             prefix_match: vec![],
             forbidden: vec![],
             forbidden_prefix: vec![],
@@ -3019,7 +3021,7 @@ mod tests {
         assert!(!c.out_dir.exists(), "no outputs written when a step fails");
     }
 
-                                                                                                   
+                                                                                                    
     /// (seabios) build whose kernel `.config` RE-ENABLES a forbidden USB driver must FAIL the bake —
     /// the vps-kvm `forbidden` set is unioned into the config-assert on the production path. Were
     /// `union()` a no-op (the regression this guards), the build would wrongly SUCCEED. This is the
@@ -3040,7 +3042,7 @@ mod tests {
         );
     }
 
-                                                                                                     
+                                                                                                      
     /// the required USB host/storage stack must FAIL (the bare-metal `exact_match` block is unioned in). The
     /// existing UEFI happy-path test uses `with_baremetal_config`; this is its negative, so a `union()`
     /// that dropped the bare-metal block would be caught here (the happy path alone cannot catch it).
@@ -3155,8 +3157,8 @@ mod tests {
     /// (`tests/openssh_authorized_keys_routing.rs`): the box re-establishes the SAME property — the
     /// operator's staged pubkey is the SOLE `authorized_keys` source — via a rootfs symlink, with NONE
     /// of NixOS's activation/tmpfiles/systemd write channels. Asserts `render_configs` routes
-                                                                                
-                                                           
+                                                                                 
+                                                            
     #[test]
     fn authorized_keys_routes_to_the_sole_persist_staged_source() {
         let staging = tempfile::tempdir().unwrap();

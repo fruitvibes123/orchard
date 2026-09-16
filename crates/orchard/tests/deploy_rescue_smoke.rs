@@ -7,7 +7,7 @@
 //!   `RECIPES_RESCUE_IMG=<img> RECIPES_RESCUE_PRIVKEY=<key> cargo test -p orchard --test deploy_rescue_smoke`
 //!
 //! `rescue_bundle_activates_on_corrupt_persist` proves the rescue contract on a NO-fs /persist (spec
-                                                                                                      
+                                                                                                       
 //! dropbear — (a) recipes does NOT answer, (c) it's reachable by the baked recovery pubkey, (b) its host
 //! key matches the offline `derive-rescue-host-keys --image` precompute (TOFU determinism), and (d) it
 //! presents the rescue banner.
@@ -21,7 +21,7 @@ use std::path::Path;
 use std::process::Command;
 
 /// The env (a built `.img` with a baked recovery pubkey + the matching recovery privkey) both rescue
-                                                                                                         
+                                                                                                          
 /// run only via `--ignored` (`make boot-gate`); a missing env there is an operator error, never a silent
 /// pass — a boot gate must never report success without asserting the produced bytes.
 fn gate_env() -> (String, String) {
@@ -74,9 +74,18 @@ fn rescue_bundle_activates_on_corrupt_persist() {
         Path::new(&img),
         Path::new(&privkey),
         &expected_fp,
-        &orchard::deploy::dryrun::DryrunOpts::default(),
+                                                     
+        &orchard::ceremony::leg_registry::rescue_bundle_opts(),
     )
     .expect("rescue bundle should activate + verify on a corrupt /persist");
+                                                                                                  
+                                                                                                 
+                                                               
+    orchard::ceremony::gate_record::emit_leg_pass(
+        Path::new(&img),
+        "rescue_bundle_activates_on_corrupt_persist",
+    )
+    .expect("emit this leg's gate-record row");
 }
 
 #[test]
@@ -87,11 +96,9 @@ fn rescue_activates_on_rc4_corrupt_persist() {
     let expected_fp = expected_rescue_fp(&img);
                                                                                                        
                                                                                                           
-    let opts = orchard::deploy::dryrun::DryrunOpts {
-        ssh_port: 2223,
-        https_port: 8444,
-        ..Default::default()
-    };
+                                                                                             
+                                                                           
+    let opts = orchard::ceremony::leg_registry::rescue_rc4_opts();
     orchard::deploy::dryrun::boot_rc4_corrupt_persist_and_verify(
         Path::new(&img),
         Path::new(&privkey),
@@ -99,4 +106,12 @@ fn rescue_activates_on_rc4_corrupt_persist() {
         &opts,
     )
     .expect("rc=4-corrupt /persist must divert to rescue (prepare-persist e2fsck rc=4 branch)");
+                                                                                                  
+                                                                                                 
+                                                               
+    orchard::ceremony::gate_record::emit_leg_pass(
+        Path::new(&img),
+        "rescue_activates_on_rc4_corrupt_persist",
+    )
+    .expect("emit this leg's gate-record row");
 }

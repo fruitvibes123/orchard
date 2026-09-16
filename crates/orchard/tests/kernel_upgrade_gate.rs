@@ -1,10 +1,10 @@
-                                                                                                       
+                                                                                                        
 //! env-gated (`RECIPES_KERNEL_GATE`), wired into `make boot-gate`; PANICS if run `--ignored` without
-                                                                                                          
+                                                                                                           
 //!
 //! ## Why this + the unit suite both
 //! `tests/kernel_bump.rs` calls `bump_kernel` DIRECTLY on a synthetic temp ecosystem — it proves the
-                                                                                                           
+                                                                                                            
 //! This gate drives the REAL `ShellStepExec` through the REAL `execute` + the REAL `market verify`, on
                                                                                                       
 //! the network transport is faked (a committed-fixture `(tar, sign)` pair) — the keyring pin check,
@@ -32,9 +32,7 @@ use std::time::SystemTime;
 
 use orchard::deploy::kernel_bump::{KERNEL_ORG_BASE, KERNEL_TAR_CEILING, KernelBump, bump_kernel};
 use orchard::deploy::market::{VerifyOpts, verify};
-use orchard::deploy::market_exec::{
-    ShellStepExec, Stage, StepExec, default_store, execute, resolve_layout,
-};
+use orchard::deploy::market_exec::{ShellStepExec, Stage, StepExec, execute, resolve_layout};
 use orchard::deploy::market_upgrade::{Step, Target, UpgradeError, plan};
 use recipes_image_builder::Fetcher;
 use recipes_image_builder::pin_manifest::PinManifest;
@@ -213,7 +211,12 @@ fn phase1_fail_before_swap_is_byte_identical(fx: &Fixture) {
     let manifest = RepoManifest::load(&orchard_root.join("repo-manifest.toml")).unwrap();
     let consume = PinManifest::load(&orchard_root.join("consume-pins.toml")).unwrap();
     let store = default_store(&orchard_root);
-    let layout = resolve_layout(&manifest, orchard_root.clone(), store);
+    let layout = resolve_layout(
+        &manifest,
+        orchard_root.clone(),
+        store,
+        orchard_root.join("repo-manifest.toml"),
+    );
 
     let pins = four_pins(&orchard_root, &manifest);
     let keyring_dir = orchard_root.join("keyring/kernel.org");
@@ -249,6 +252,8 @@ fn phase1_fail_before_swap_is_byte_identical(fx: &Fixture) {
     let staged_verify = |stage: &Stage| -> Result<(), UpgradeError> {
         let opts = VerifyOpts {
             repo_root: stage.verify_root().to_path_buf(),
+            repo_manifest: stage.verify_root().join("repo-manifest.toml"),
+            artifact_store: stage.verify_root().join("../artifact-store"),
             certs: false,
             all: false,
             allow_missing: vec![],
@@ -407,7 +412,12 @@ fn phase2_green_bump_lands_and_verifies(fx: &Fixture) {
     let manifest = RepoManifest::load(&copy.orchard_root.join("repo-manifest.toml")).unwrap();
     let consume = PinManifest::load(&copy.orchard_root.join("consume-pins.toml")).unwrap();
     let store = copy.orchard_root.join("../artifact-store");
-    let layout = resolve_layout(&manifest, copy.orchard_root.clone(), store);
+    let layout = resolve_layout(
+        &manifest,
+        copy.orchard_root.clone(),
+        store,
+        copy.orchard_root.join("repo-manifest.toml"),
+    );
     let steps = plan(&Target::Kernel(fx.version.clone()), &manifest, &consume).unwrap();
 
     let fetcher = transport(fx);
@@ -430,6 +440,8 @@ fn phase2_green_bump_lands_and_verifies(fx: &Fixture) {
     let staged_verify = |stage: &Stage| -> Result<(), UpgradeError> {
         let opts = VerifyOpts {
             repo_root: stage.verify_root().to_path_buf(),
+            repo_manifest: stage.verify_root().join("repo-manifest.toml"),
+            artifact_store: stage.verify_root().join("../artifact-store"),
             certs: false,
             all: false,
             allow_missing: vec![],
@@ -471,6 +483,8 @@ fn phase2_green_bump_lands_and_verifies(fx: &Fixture) {
     for (label, all) in [("default", false), ("--all", true)] {
         let opts = VerifyOpts {
             repo_root: copy.orchard_root.clone(),
+            repo_manifest: copy.orchard_root.join("repo-manifest.toml"),
+            artifact_store: copy.orchard_root.join("../artifact-store"),
             certs: false,
             all,
             allow_missing: vec![],
@@ -492,7 +506,12 @@ fn phase2_tampered_leaves_copy_byte_identical(fx: &Fixture) {
     let manifest = RepoManifest::load(&copy.orchard_root.join("repo-manifest.toml")).unwrap();
     let consume = PinManifest::load(&copy.orchard_root.join("consume-pins.toml")).unwrap();
     let store = copy.orchard_root.join("../artifact-store");
-    let layout = resolve_layout(&manifest, copy.orchard_root.clone(), store);
+    let layout = resolve_layout(
+        &manifest,
+        copy.orchard_root.clone(),
+        store,
+        copy.orchard_root.join("repo-manifest.toml"),
+    );
     let steps = plan(&Target::Kernel(fx.version.clone()), &manifest, &consume).unwrap();
 
     let keyring = copy.orchard_root.join("keyring/kernel.org/signer.asc");
@@ -565,4 +584,13 @@ fn kernel_upgrade_is_verified_and_atomic() {
         "\nkernel_upgrade_is_verified_and_atomic: Phase 1 (real, fail-atomic) + Phase 2 (copy, \
          green-lands + tampered-atomic) all PASS — --kernel proven on produced bytes."
     );
+}
+
+/// The operator-store locator for fixture SOURCING (env-honoring: the gate harness may point
+/// FRUIT_ARTIFACT_STORE at a custom store). Production resolution went to `deploy::context`
+/// (guided-ceremony C5); this local copy keeps the harness env contract.
+fn default_store(orchard_root: &std::path::Path) -> std::path::PathBuf {
+    std::env::var_os("FRUIT_ARTIFACT_STORE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| orchard_root.join("../artifact-store"))
 }

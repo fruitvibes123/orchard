@@ -53,12 +53,24 @@ fn dryrun_boots_to_working_runtime() {
     let probe = manifest.manifest().probe.clone();
     orchard::deploy::dryrun::boot_and_verify(
         Path::new(&img),
-        &orchard::deploy::dryrun::DryrunOpts::default().with_http_probe(probe.port, &probe.path),
+                                                                                                  
+                                                                                                 
+                                                                         
+        &orchard::ceremony::leg_registry::dryrun_runtime_opts()
+            .with_http_probe(probe.port, &probe.path),
     )
     .expect("dryrun boot+verify should succeed on a freshly-built image");
+                                                                                                  
+                                                                                                 
+                                                               
+    orchard::ceremony::gate_record::emit_leg_pass(
+        Path::new(&img),
+        "dryrun_boots_to_working_runtime",
+    )
+    .expect("emit this leg's gate-record row");
 }
 
-                                                                                                         
+                                                                                                          
 /// Build a toy `.img` from the non-recipes manifest:
 ///   `orchard build --domain toy.test --manifest crates/image-builder/toy-tenant.toml \
 ///        --operator-pubkey <k>.pub --recovery-pubkey <k>.pub --net '<...>' --out-dir <dir> --allow-dirty`

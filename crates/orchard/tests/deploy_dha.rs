@@ -3,13 +3,13 @@
 //! `#[ignore]` + env-gated (`RECIPES_DHA_IMG` + `RECIPES_DHA_PRIVKEY` + `/dev/kvm`): under the default
 //! `cargo test` these report "ignored" (honest); under `--ignored` (via `make boot-gate-dha`) a MISSING
 //! env PANICS rather than silent-passing — so there is no invocation in which a dha gate reports success
-                                                                            
+                                                                             
 //!
 //! The `.img` is a `--firmware seabios-gpt --manifest crates/image-builder/dha-tenant.toml` build with
-//! `RECIPES_DHA_WEIGHTS_GGUF` set (bakes the 5th GPT weights partition). The tenant is the REAL
+                                                                                                                 
 //! creatine/dha-orchestrator/epa (dha's 2nd supply-chain tenant): the gate proves the BOX mechanism
 //! (cgroup Σ-ceiling + precise `work/` delegation + s6-permafailon restart-cap + the RO dm-verity weights
-                                                                                                            
+                                                                                                             
 //! §2 intake probe (H2/Option-A) + the S-INTAKE-WIRE §7 AC-I1..I11 suite (which GATE on dha's published
 //! bins + staged scripts, so this whole gate needs dha's publish before it goes green).
 //!
@@ -25,12 +25,12 @@ use std::path::Path;
 /// 256 + 512 = 768 MiB clears the ~1939 MiB MemTotal of a 2 GiB box with wide margin, keeping the F2
 /// ancestor-Σ OOM cgroup-scoped rather than global.
 ///
-                                                                                                       
+                                                                                                        
 /// A revision of this cycle briefly pointed the `dha-tenant` pin profile at the production VL pair and
-                                                                                                      
+                                                                                                       
 /// F2 (`assert_ancestor_sigma_survival`) requires a LIVE creatine, and a 1.03 GiB model under this
 /// manifest's 128 MiB `oom_group` engine leaf is an untested regime. This gate's job is BOX MECHANISM;
-                                                                                                      
+                                                                                                       
 /// against the real production image.
 fn dha_opts() -> orchard::deploy::dryrun::DryrunOpts {
     orchard::deploy::dryrun::DryrunOpts {
@@ -47,7 +47,7 @@ fn dha_env() -> (String, String) {
         panic!(
             "dha boot-gate invoked (--ignored) without RECIPES_DHA_IMG + RECIPES_DHA_PRIVKEY — set them \
              to a `--firmware seabios-gpt --manifest crates/image-builder/dha-tenant.toml` .img (built \
-             with RECIPES_DHA_WEIGHTS_GGUF set) + its operator private key, or run via `make \
+             with --dha-weights-gguf) + its operator private key, or run via `make \
              boot-gate-dha`. A boot gate must never pass without asserting the produced bytes."
         );
     };

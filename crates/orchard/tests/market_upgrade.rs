@@ -8,7 +8,7 @@
 //! untouched) is proven directly + decoupled from the build machinery. The overlay primitives (read-through,
 //! stage-write isolation, tree-replace) are unit-tested white-box in `src/deploy/market_exec.rs`.
 //!
-                                                                                                            
+                                                                                                             
 //! (co-located like the armed gate does), real record loop, real swap — against a grocer-publishable
 //! fixture eco; ONLY the staged-verify verdict is injected (the canonical-shape verify cannot run on a
 //! synthetic eco; the armed grocer gate covers it on the real one).
@@ -61,6 +61,7 @@ fn fixture() -> (tempfile::TempDir, StoreLayout, PathBuf) {
     let pub_pins = sib.join("published-pins.toml");
     std::fs::write(&pub_pins, "orig").unwrap();
     let layout = StoreLayout {
+        repo_manifest: orchard.join("repo-manifest.toml"),
         orchard_root: orchard,
         store: base.path().join("eco/artifact-store"),
         repos: BTreeMap::from([("seed-vault".to_string(), sib)]),
@@ -224,6 +225,7 @@ fn publishable_fixture() -> (tempfile::TempDir, StoreLayout) {
     let store = base.path().join("eco/artifact-store");
     std::fs::create_dir_all(&store).unwrap();
     let layout = StoreLayout {
+        repo_manifest: orchard.join("repo-manifest.toml"),
         orchard_root: orchard,
         store,
         repos: BTreeMap::from([("seed-vault".to_string(), sib)]),
@@ -419,6 +421,7 @@ fn config_publishable_fixture() -> (tempfile::TempDir, StoreLayout) {
     let store = eco.join("artifact-store");
     std::fs::create_dir_all(&store).unwrap();
     let layout = StoreLayout {
+        repo_manifest: orchard.join("repo-manifest.toml"),
         orchard_root: orchard,
         store,
         repos: BTreeMap::from([("dha".to_string(), dha)]),

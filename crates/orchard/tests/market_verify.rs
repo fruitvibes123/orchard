@@ -1,10 +1,10 @@
 //! `market verify` integration self-test (the public `verify` entry, end-to-end). Every check must FIRE
-                                                                                                       
+                                                                                                        
 //! expected check set. The collect-all / exact-check-set-lock assembly logic is unit-tested white-box in
 //! `src/deploy/market.rs` (it reaches the private `CheckReport`); per-check fail-closed cases live in the
 //! lib modules (provenance/seed_agree/store_checks/cert_presence). This file covers the fixture-expressible
 //! fail-closed verdicts (manifest omission/extra → a collected `ManifestArtifactSet` failure) + the
-                                                                               
+                                                                                
 
 use std::path::Path;
 
@@ -38,6 +38,8 @@ fn write_fixture(root: &Path, consume: &[(&str, &str)], repos: &[(&str, &str, &[
 fn opts(root: &Path) -> VerifyOpts {
     VerifyOpts {
         repo_root: root.to_path_buf(),
+        repo_manifest: root.join("repo-manifest.toml"),
+        artifact_store: root.join("../artifact-store"),
         certs: false,
         all: false,
         allow_missing: vec![],

@@ -2,9 +2,10 @@
 # (firmware Uefi ⇒ this block). Asserts the USB host/storage stack is compiled IN: real bare-metal boots
 # off USB media whose enumeration needs the xHCI/EHCI + USB-storage drivers. The linux-virt base
 # ships them as modules (=m), which CONFIG_MODULES=n promotes to =y builtin; kernel-hardening-baremetal.config
-# force-sets them =y anyway (pin the requirement vs a base drift to =n) and these VERIFY it. USB is the one
-# substrate-differentiated class — the disk transports (SCSI/ATA/NVMe/BLK_DEV_SD) are shared base config,
-# force-set + PINNED in the shared block (audit L-1), present on both substrates.
+# force-sets them =y, so a base drift to =n self-heals silently; these pins verify the force-set
+# took, not that the base held. USB is the one substrate-differentiated class — the disk transports
+# (SCSI/ATA/NVMe/BLK_DEV_SD) are shared base config, force-set + PINNED in the shared block
+# (audit L-1), present on both substrates.
 exact_match = [
     "CONFIG_USB=y",
     "CONFIG_USB_XHCI_HCD=y",

@@ -57,6 +57,9 @@ fn prod_args_carry_a_nonstandard_port_ssh_lowercase_scp_uppercase() {
 fn known_hosts_host_token_brackets_nonstandard_port() {
                                                                                                 
     let p22 = ProcessOps {
+                                                                                               
+                                                                                  
+        provisioning_user: crate::deploy::prod_orchestrate::DEFAULT_RECONNECT_USER.to_string(),
         ip: "127.0.0.1".into(),
         ssh_port: 22,
         ssh_identity: "/a".into(),
@@ -67,6 +70,9 @@ fn known_hosts_host_token_brackets_nonstandard_port() {
     };
     assert_eq!(p22.known_hosts_host(), "127.0.0.1");
     let p2222 = ProcessOps {
+                                                                                               
+                                                                                  
+        provisioning_user: crate::deploy::prod_orchestrate::DEFAULT_RECONNECT_USER.to_string(),
         ssh_port: 2222,
         ..p22
     };
@@ -128,18 +134,18 @@ struct FakeOps {
     staged_image: Option<Vec<u8>>,
     /// Hex digest of the last raw-window stage (the patched stream) — seam-test corroboration.
     raw_window_digest: Option<String>,
-                                                                                             
+                                                                                              
     /// advances it (deterministic reconnect-wait timing); `None` ⇒ real wall-clock.
     mock_clock: Option<std::cell::Cell<i64>>,
     /// The mock-clock value at which the reconnect probe starts answering (slow-reconnect fixture).
     reconnect_up_at: Option<i64>,
-                                                                                              
+                                                                                               
     known_hosts_conflict: Option<String>,
-                                                                                             
+                                                                                              
     /// flips true AT THAT POINT — used to arm a cancel BETWEEN a verb's two
     /// `reclaim_cancel_check` sites (the plan `say` sits between them). Default None ⇒ inert.
     cancel_on_say: Option<&'static str>,
-                                                                                                       
+                                                                                                        
     /// the pre-fire, reachable-target refusal shape (a lockdown-refused `kexec -e` or a failed
     /// pre-kexec `sync`). Default None ⇒ fire_kexec returns Ok (fired), the shape the AC-R13 vectors
     /// and every other test drive.
@@ -443,7 +449,7 @@ impl FakeOps {
     }
 
     /// A happy fake whose reconnect probe fails until the mock clock reaches `up_at` — drives the
-                                                                             
+                                                                              
     fn reconnect_slow(dir: &Path, up_at: i64) -> FakeOps {
         let mut ops = Self::happy(dir);
         ops.mock_clock = Some(std::cell::Cell::new(0));
@@ -1810,7 +1816,7 @@ fn restore_preflight_no_pin_aborts_before_any_remote_action() {
     );
 }
 
-                                                                                                 
+                                                                                                  
 /// `deploy_prod` call site attaches the ceremony residue disclosure. Drive the WHOLE staging closure
 /// to the composer's length refusal (a long on-target stage dir pushes the restore path past
 /// `COMMAND_LINE_SIZE - 1`) and assert the surfaced error carries BOTH the interpolated staging path
@@ -1888,7 +1894,7 @@ fn over_budget_composer_refusal_surfaces_the_call_site_residue_disclosure() {
     );
 }
 
-                                                                                                  
+                                                                                                   
 /// site-scoped residue disclosure but NOT the length-only kexec-consumer narration. Drive the whole
 /// staging closure to a shape refusal (`--restore-min-ctr` with no `--restore-from`) and assert the
 /// narration is absent while the residue clause is present.

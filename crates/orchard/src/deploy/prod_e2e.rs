@@ -18,14 +18,14 @@
 //! with `--operator-pubkey` + `--net` for the QEMU user-net), the matching operator private key, and
 //! a Debian generic-cloud-derived fixture (`RECIPES_PROD_E2E_DEBIAN_IMG`). The harness downloads
 //! nothing — the fixture is operator-supplied, built once by [`prepare_kexec_fixture`], which prints
-                                                                                             
+                                                                                              
 //! `pins.toml`/`consume-pins.toml` build inputs, the fixture sha is recorded in prose, not asserted
 //! by any gate run, so a fixture built from a different Debian base would green while describing an
 //! unspecified target. The two obvious wrong-image cases still fail closed — no `kexec-tools` → the
 //! kexec-discovery timeout; `cloud-initramfs-growroot` present → D-1's partition-intersection refusal.
 //!
 //! **The guest runs HERMETIC** (`-netdev user,…,restrict=on`; [`DebianE2eOpts::restrict_net`]) — no
-                                                                                                
+                                                                                                 
 //! manifest ships a live `fb-acme-renew`, so a box booted under open NAT placed real Let's Encrypt
 //! **production** orders from the operator's IP on every run. The cost is that `kexec-tools` can no
 //! longer be apt-installed at boot, so it is baked into a one-time fixture image by
@@ -63,11 +63,11 @@ pub struct DebianE2eOpts {
     /// still works (every ssh leg and the ceremony's reconnect are unaffected), but the guest — and
     /// the BOX installed into it — gets NO outbound NAT/DNS.
     ///
-                                                                                                   
+                                                                                                    
     /// runs a real `fb-acme-renew` longrun, so a box booted under open NAT places a live **Let's
     /// Encrypt production** order — creating an ACME account from the operator's public IP on every
     /// gate run, and burning rate limits against the endpoint the real-domain order will need. Same
-                                                                                          
+                                                                                           
     /// [`super::dryrun::DryrunOpts::restrict_net`]); this is that fix reaching the prod-e2e path.
     /// Blocking egress also keeps the guest's `ntpd` off the public internet.
     ///
@@ -78,7 +78,7 @@ pub struct DebianE2eOpts {
     /// How long to wait for the installed box to come up post-kexec (install + reboot + first-boot
     /// grow). Passed straight to [`DeployProdOpts::reconnect_timeout_secs`].
     pub reconnect_timeout_secs: u64,
-                                                                                                       
+                                                                                                        
     /// `image + INSTALL_MIN_RAM_BYTES > guest RAM` (whole-image buffering cannot fit), plus a
     /// weights-payload floor against the profile's pinned bytes. `Some` only on the weights leg; the
     /// standard happy leg leaves this `None`.
@@ -144,7 +144,7 @@ impl Default for DebianE2eOpts {
 /// only what the guest actually writes.
 pub const REFERENCE_E2E_GUEST_DISK_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 
-                                                                                                            
+                                                                                                             
 /// (measured: the ceremony refused at 3 GiB, wanting the tail window to sit above byte 2,001,731,584 with
 /// a 1,892,032,512-byte image). 12 GiB gives that real headroom and is modest for a 2 GiB-RAM VPS.
 pub const PROD_E2E_GUEST_DISK_BYTES: u64 = 12 * 1024 * 1024 * 1024;
@@ -156,17 +156,17 @@ pub const PROD_E2E_GUEST_DISK_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// in-flight cloud-init-wait ssh session. PURE — unit-tested; the I/O (cloud-localds, QEMU) is
 /// integration-proven by the `#[ignore]` gate.
 ///
-                                                                                                    
+                                                                                                     
 /// HARD-aborts without `kexec`, but installing it here needed `package_update: true` + an apt fetch
 /// over the guest's outbound NAT — and that same open NAT is what let a booted box place live Let's
 /// Encrypt production orders. The package now comes pre-installed on the fixture built by
 /// [`prepare_kexec_fixture`], which is what lets [`DebianE2eOpts::restrict_net`] default to `true`.
 ///
-                                                                                                    
+                                                                                                     
 /// The streaming ceremony places its raw staging window at the extreme disk TAIL, and cloud-init's
 /// `growpart` grows the root partition to the disk's END — so on a default-provisioned cloud image
 /// the two ALWAYS intersect, at any disk size. That is not a rare race: it is the Debian/Ubuntu
-                                                                                                      
+                                                                                                       
 /// inside the live mounted root fs and passed only because the digest happened not to catch a
 /// writeback.
 ///
@@ -174,8 +174,8 @@ pub const PROD_E2E_GUEST_DISK_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// genuinely UNPARTITIONED tail, and the gate proves the streaming install without a writeback race
 /// in the middle of it. What this gate therefore no longer models is a DEFAULT-provisioned provider
 /// — and against such a target `orchard prod` now refuses outright, by design, until the
-                                                                                                
-                                                                                
+/// consent-gated `--reclaim-tail` (spec D-2, its own cycle) can shrink the doomed root fs. D-1's
+                                                                                 
 pub fn render_cloud_init_user_data(provisioning_pubkey_line: &str) -> String {
                                                                                                   
                                                                                                      
@@ -202,7 +202,11 @@ pub fn render_cloud_init_user_data(provisioning_pubkey_line: &str) -> String {
          runcmd:\n\
          \x20 - [ install, -d, -m, '0700', -o, root, -g, root, /root/.ssh ]\n\
          \x20 - [ chmod, '0600', /root/.ssh/authorized_keys ]\n\
-         \x20 - [ chown, 'root:root', /root/.ssh/authorized_keys ]\n"
+         \x20 - [ chown, 'root:root', /root/.ssh/authorized_keys ]\n\
+         \x20 - [ install, -d, -m, '0700', -o, debian, -g, debian, /home/debian/.ssh ]\n\
+         \x20 - [ cp, /root/.ssh/authorized_keys, /home/debian/.ssh/authorized_keys ]\n\
+         \x20 - [ chmod, '0600', /home/debian/.ssh/authorized_keys ]\n\
+         \x20 - [ chown, 'debian:debian', /home/debian/.ssh/authorized_keys ]\n"
     )
 }
 
@@ -229,7 +233,11 @@ pub fn render_cloud_init_user_data_grown(provisioning_pubkey_line: &str) -> Stri
          runcmd:\n\
          \x20 - [ install, -d, -m, '0700', -o, root, -g, root, /root/.ssh ]\n\
          \x20 - [ chmod, '0600', /root/.ssh/authorized_keys ]\n\
-         \x20 - [ chown, 'root:root', /root/.ssh/authorized_keys ]\n"
+         \x20 - [ chown, 'root:root', /root/.ssh/authorized_keys ]\n\
+         \x20 - [ install, -d, -m, '0700', -o, debian, -g, debian, /home/debian/.ssh ]\n\
+         \x20 - [ cp, /root/.ssh/authorized_keys, /home/debian/.ssh/authorized_keys ]\n\
+         \x20 - [ chmod, '0600', /home/debian/.ssh/authorized_keys ]\n\
+         \x20 - [ chown, 'debian:debian', /home/debian/.ssh/authorized_keys ]\n"
     )
 }
 
@@ -237,7 +245,7 @@ pub fn render_cloud_init_user_data_grown(provisioning_pubkey_line: &str) -> Stri
 /// only preflight on this path — there is no `dryrun::preflight` delegation): the QEMU image
 /// tooling, the cloud-init seed builder, the full ssh client set (`scp` stages the artifacts),
 /// and `veritysetup` (the ceremony's local fb.root-hash recompute plus the harness's own
-                                                                                              
+                                                                                               
 /// missing one failed mid-flight (safely, pre-kexec) instead of at preflight.
 const E2E_HOST_TOOLS: [&str; 8] = [
     "qemu-system-x86_64",
@@ -361,10 +369,10 @@ fn make_overlay(
 /// The Debian-guest `-netdev` argument. `restrict=on` isolates the guest from the host and the
 /// internet; QEMU's own contract is that it "does not affect any explicitly set forwarding rules", so
 /// the `hostfwd` keeps working and every inbound ssh leg is unaffected — only EGRESS dies. That
-                                                                                                   
+                                                                                                    
 /// QEMU itself, so the guest still gets its lease. Pure so the hermetic wiring is a TESTABLE property
-                                                                          
-fn debian_user_netdev_arg(forward_port: u16, restrict_net: bool) -> String {
+                                                                           
+pub(crate) fn debian_user_netdev_arg(forward_port: u16, restrict_net: bool) -> String {
     format!(
         "user,id=n0,hostfwd=tcp:127.0.0.1:{forward_port}-:22{}",
         if restrict_net { ",restrict=on" } else { "" }
@@ -489,10 +497,10 @@ fn guest_ssh(provisioning_privkey: &Path, port: u16, remote: &str) -> Result<Str
 /// the provisioning privkey path. Shared by the happy + negative harnesses. `console` is the
 /// caller-named console log — PER-TEST names (same discipline as the forward port): parallel tests
 /// share one log dir, so a shared `guest-console.log` would interleave/clobber across QEMUs.
-                                                                                               
+                                                                                                
 /// reclaim legs (RT-1/RT-2) set it, so their guest boots with growpart ON + `resize_rootfs: true`
 /// — the default-provisioned-VPS shape D-1 refuses and the reclaim exists to unblock, which is what
-                                                                                                  
+                                                                                                   
 /// off), byte-identical to before. Before this selector the field was read nowhere, so both reclaim
 /// legs booted on the base config with cloud-init growth disabled.
 fn provisioning_user_data(opts: &DebianE2eOpts, provisioning_pubkey_line: &str) -> String {
@@ -503,7 +511,14 @@ fn provisioning_user_data(opts: &DebianE2eOpts, provisioning_pubkey_line: &str) 
     }
 }
 
-fn boot_provisioned_guest(
+/// Boot a hermetic Debian guest, provisioned via cloud-init with a fresh keypair, and return the
+/// live `QemuGuard` (RAII-kills QEMU on drop), the workdir tempdir (holds the seed/keys), and the
+                                                                                         
+/// `orchard run` installs onto — the boot-and-hand-back primitive `run_debian_kexec_takeover_e2e`
+/// builds on, without the takeover the ceremony itself performs. The caller MUST keep the guard +
+/// workdir in scope for the whole ceremony (the guest stays up only while they live). The guest
+/// authenticates the `debian` user on `opts.forward_port` with the returned key.
+pub fn boot_provisioned_guest(
     debian_img: &Path,
     opts: &DebianE2eOpts,
     console: &Path,
@@ -552,7 +567,7 @@ fn boot_provisioned_guest(
 /// Poll the booted guest (fresh ssh per attempt — robust to a transient cloud-init-induced drop)
 /// until `command -v kexec` succeeds. Fail-closed on timeout.
 ///
-                                                                                             
+                                                                                              
 /// timeout here means the operator pointed at the WRONG IMAGE — the stock Debian base instead of the
 /// prepared fixture. The message says so; blaming "the guest's outbound apt route" (as it used to)
 /// would now be actively misleading, because the gate deliberately runs with no outbound route.
@@ -620,7 +635,7 @@ pub fn render_fixture_prep_user_data(provisioning_pubkey_line: &str) -> String {
 /// Build the one-time Debian fixture the hermetic gate needs: the operator's pinned genericcloud
 /// base with `kexec-tools` PRE-INSTALLED and cloud-init RESET. Returns the fixture's sha256 hex.
 ///
-                                                                                                 
+                                                                                                  
 /// the target, and this is the one boot allowed outbound access to put it there.
 ///
 /// **`cloud-init clean` is mandatory, not hygiene.** `cloud-localds` writes a FIXED
@@ -661,8 +676,8 @@ pub const GROWN_FIXTURE_DISK_BYTES: u64 = 12 * 1024 * 1024 * 1024;
 /// [`GROWN_FIXTURE_DISK_BYTES`], so the first boot grows the root to fill the disk exactly as a
 /// provider default does. Fails closed the OPPOSITE way from the kexec fixture: growroot must
 /// STILL be installed, the root must have actually GROWN, and its fstab must still carry
-                                                                                                     
-           
+                                                                                                      
+            
 pub fn prepare_grown_fixture(base_img: &Path, out: &Path) -> Result<String, String> {
     e2e_preflight()?;
     if out.exists() {
@@ -1046,6 +1061,12 @@ fn ceremony_inputs(
     let ip = validate_target_host("127.0.0.1")?;
     let pubkey = operator_pubkey_path(operator_privkey)?;
     let ops = NonInteractiveOps(ProcessOps {
+                                                                                        
+                                                                                                 
+                                                                                              
+                                                                                                  
+                              
+        provisioning_user: crate::deploy::prod_orchestrate::DEFAULT_PROVISIONING_USER.to_string(),
         ip: ip.clone(),
         ssh_port: opts.forward_port,
         ssh_identity: provisioning_privkey.to_path_buf(),
@@ -1074,7 +1095,7 @@ fn ceremony_inputs(
     Ok((ops, deploy_opts))
 }
 
-                                                                                              
+                                                                                               
 /// derives the privkey by STRIPPING `.pub`, so the inverse is always an append — never
 /// `with_extension`, which would mangle a `key.priv`-style name into `key.pub`).
 fn operator_pubkey_path(operator_privkey: &Path) -> Result<PathBuf, String> {
@@ -1092,9 +1113,9 @@ fn operator_pubkey_path(operator_privkey: &Path) -> Result<PathBuf, String> {
 }
 
 /// RT-2 (reclaim-tail D-2 §9, AC-R2's produced-bytes half): the SAME grown target, NO flag.
-                                                                                                
-/// partition table untouched: the first 34 and last 33 sectors (the GPT primary + backup regions
                                                                                                  
+/// partition table untouched: the first 34 and last 33 sectors (the GPT primary + backup regions
+                                                                                                  
 /// must be identical.
 pub fn run_reclaim_no_flag_untouched_e2e(
     box_img: &Path,
@@ -1196,10 +1217,10 @@ pub fn run_reclaim_no_flag_untouched_e2e(
 /// the ceremony's `Ok` (its own verity-root-hash + boot-fs-prefix + liveness verdict over the
 /// derived-fingerprint-pinned reconnect) AND a non-ceremony post-condition probe (a fresh
 /// operator-key ssh on a harness-built pin asserting the harness-recomputed root hash) — so the
-                                                                                            
+                                                                                             
 ///
 /// `expected_firmware_token`: when `Some`, additionally assert the booted cmdline carries
-                                                                                                              
+                                                                                                               
 pub fn run_debian_kexec_takeover_e2e(
     box_img: &Path,
     operator_privkey: &Path,
@@ -1356,8 +1377,8 @@ fn operator_ssh_capture(
 
 /// Acceptance #2/#4 — both fail-closed negatives over the REAL ops on ONE booted guest (neither
 /// wipes it): Leg-A (a mismatched `--host-fingerprint` non-interactively) aborts after the scan,
-                                                                                               
-                                                                                           
+                                                                                                
+                                                                                            
 /// untouched: still on its Debian root, the stage dir holding no staged `.img`.
 pub fn run_negative_paths_e2e(
     box_img: &Path,
@@ -1613,12 +1634,40 @@ mod tests {
     }
 
     #[test]
+    fn the_cloud_init_user_data_authorizes_the_cloud_user_too() {
+                                                                                           
+                                                                                                
+                                                                                                  
+                                                                       
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 fixture";
+        for ud in [
+            render_cloud_init_user_data(key),
+            render_cloud_init_user_data_grown(key),
+        ] {
+            assert!(
+                ud.contains("/home/debian/.ssh/authorized_keys"),
+                "the cloud user is authorized: {ud}"
+            );
+            assert!(
+                ud.contains("'debian:debian'"),
+                "and the file is owned by it: {ud}"
+            );
+                                                                                          
+            assert!(ud.contains("/root/.ssh/authorized_keys"), "{ud}");
+        }
+    }
+
+    #[test]
     fn harness_ops_are_pinned_non_interactive() {
                                                                                              
                                                                                                   
                                                                                                 
                                                          
         let mut ops = NonInteractiveOps(ProcessOps {
+                                                                                               
+                                                                        
+            provisioning_user: crate::deploy::prod_orchestrate::DEFAULT_PROVISIONING_USER
+                .to_string(),
             ip: "127.0.0.1".into(),
             ssh_port: 2222,
             ssh_identity: "/k".into(),

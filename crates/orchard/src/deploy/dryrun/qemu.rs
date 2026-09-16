@@ -30,16 +30,16 @@ fn qemu_dies_with_parent(opts: &DryrunOpts) -> bool {
 /// while leaving the inbound `hostfwd` rules intact — QEMU's user-net `restrict` "does not affect any
 /// explicitly set forwarding rules" (QEMU invocation docs / user-networking), so ssh/https hostfwd
 /// still work while egress and DNS die. Extracted so the hermetic wiring lives in ONE place with ONE
-                                                                                                    
+                                                                                                     
 /// `boot_installed_uefi_disk` — the builders that boot the INSTALLED services box where
 /// `fb-acme-renew` runs — booted under open NAT for every value of the flag.
 ///
 /// Each `hostfwd` binds the LOOPBACK host address (`tcp:127.0.0.1:…`), so only the host reaches the
 /// guest's forwarded dropbear (22) and haproxy (`guest_https_port`) ports, never the whole network
-                                                                                    
+                                                                                     
 /// `hostfwd=tcp:127.0.0.1:PORT-…` on `127.0.0.1` (measured, QEMU 11.0.3 via `ss -tln`). The sibling
 /// `prod_e2e.rs::debian_user_netdev_arg` binds loopback the same way.
-pub(super) fn user_netdev_arg(opts: &DryrunOpts) -> String {
+pub(crate) fn user_netdev_arg(opts: &DryrunOpts) -> String {
     format!(
         "user,id=n0,hostfwd=tcp:127.0.0.1:{}-:22,hostfwd=tcp:127.0.0.1:{}-:{}{}",
         opts.ssh_port,
@@ -498,7 +498,7 @@ pub fn build_enrolled_sb_vars(
 
 /// Boot an installed UEFI disk and assert it does NOT reach SSH within `timeout` — the §9.3 negative
 /// shape (a refused/halted chain must NOT come up to services). Returns the boot console text for the
-                                                                                                       
+                                                                                                        
 /// sufficient; the caller asserts the firmware/loader actually SIGNALLED a refusal, not merely hung).
 pub(super) fn boot_installed_uefi_disk_expect_no_services(
     disk: &Path,

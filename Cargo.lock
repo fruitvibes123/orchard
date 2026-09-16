@@ -1270,7 +1270,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "orchard"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "backhand",
@@ -1286,6 +1286,7 @@ dependencies = [
  "hex",
  "libc",
  "poly1305",
+ "proc-macro2",
  "rand",
  "rcgen",
  "recipes-image-builder",
@@ -1301,6 +1302,14 @@ dependencies = [
  "toml",
  "x509-parser",
  "zeroize",
+]
+
+[[package]]
+name = "orchard-shim"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

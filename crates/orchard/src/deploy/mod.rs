@@ -4,13 +4,18 @@
 //! Cargo feature it replaced (which no longer exists), enforced by the `crux-orchard`
 //! Makefile gate rather than a feature flag.
 //!
-                                                                                               
+                                                                                                
 //! §"Operator CLI surface" + §"Operator first-time key bootstrap" + §"Build pipeline".
 
 pub mod artifact_keys;
 pub mod artifact_sign;
 pub mod artifact_verify;
 pub mod build_image;
+                                                                                                 
+/// path through ONE chain (flag > profile > env > context file > builtin CWD default), printable
+/// sources, fail-closed refusals on unresolvable named paths. The single home of the context
+/// defaults; every consumer site routes through [`context::ResolvedContext`].
+pub mod context;
 /// `orchard update <host> --image <img>` (os-update A/B v1, C-E): the 8-step operator-push ceremony —
 /// local sig-verify + compose ([`update::prepare_local_image`]) then pin/authorize/sign/stream/watch
 /// ([`update::run_ceremony`], behind `UpdateOps` for FakeOps testing).
@@ -20,7 +25,7 @@ pub mod deploy_model;
 pub mod doctor;
 pub mod dryrun;
 /// `prctl(PR_SET_DUMPABLE, 0)` — the seed-lifecycle-symmetric core-dump guard
-                                                                   
+                                                                    
 pub mod dumpable;
 /// The shared `next:` epilogue formatter (Component 4 / orchard-UX): every artifact-producing verb
 /// ends with the natural next command(s). Reused by `doctor --for boot-gate` (C2) and `prime` (C6).
@@ -89,7 +94,7 @@ pub mod vendor_cmd;
 pub mod verify;
 
 /// The committed `pinned-artifact-root.toml` location under a repo root — the durable
-                                                                                       
+                                                                                        
 /// derivation (debt-burndown plan-audit L-1): the CLI arms and the bake both call this
 /// (with `repo_root()` / `opts.repo_root`), so the path can never fork between them.
 /// Mirrors `repo_fingerprints_path`'s anchor (`crates/image-builder/`, the generate-keys

@@ -22,7 +22,7 @@ extern "C" fn set_cancel_flag(_sig: libc::c_int) {
 
 /// Install the SIGINT/SIGTERM → flag handlers (call once from the CLI arm before `deploy_prod`).
 /// Replaces the default die-immediately disposition so a Ctrl-C lands on the next gate poll with
-                                                                         
+                                                                          
 pub fn install_cancel_handler() {
                                                                                               
                                                          
@@ -45,6 +45,10 @@ pub struct ProcessOps {
     pub ssh_identity: std::path::PathBuf,
     /// Leg-B identity (the operator's box-login key — `--pubkey`'s private half).
     pub box_login_identity: std::path::PathBuf,
+    /// The PRE-KEXEC login user (plan-inputs §Transport). `debian` on the Infomaniak/Debian
+    /// substrate; `root` on a fixture whose provisioning login already is root, which skips the
+    /// sudo wrapper. Leg B is unaffected — that is the box's own dropbear.
+    pub provisioning_user: String,
     /// Leg-A known_hosts (operator-supplied via `--known-hosts`, or a flow-controlled temp file).
     pub provisioning_known_hosts: std::path::PathBuf,
     /// Leg-B known_hosts (always flow-controlled; pinned to the derived runtime key).
@@ -57,7 +61,8 @@ pub struct ProcessOps {
 impl ProcessOps {
     fn leg_args(&self, leg: Leg) -> Vec<String> {
         match leg {
-            Leg::Provisioning => prod_ssh_args(
+            Leg::Provisioning => crate::deploy::prod_orchestrate::prod_ssh_args_as(
+                &self.provisioning_user,
                 &self.ip,
                 &self.ssh_identity,
                 &self.provisioning_known_hosts,
@@ -70,6 +75,13 @@ impl ProcessOps {
                 self.ssh_port,
             ),
         }
+    }
+
+    /// A remote command for the PRE-KEXEC leg, wrapped for the login user (root: verbatim; a
+    /// cloud user: `sudo -n sh -c '…'`). Every provisioning-leg composition goes through here, so
+    /// no site can compose a privileged command that skips the wrapper.
+    fn pre_kexec(&self, cmd: &str) -> String {
+        crate::deploy::prod_orchestrate::privileged_remote(&self.provisioning_user, cmd)
     }
 
     fn run_capture(mut cmd: std::process::Command, what: &str) -> Result<String, String> {
@@ -94,7 +106,7 @@ impl OrchestrationOps for ProcessOps {
 
     /// Prints the numbered banner + the PREVIOUS step's elapsed (lazily, on the next `step()`). The
     /// ceremony's FINAL step has no successor `step()`, so its own elapsed is not printed here — the
-                                                                                                      
+                                                                                                       
     fn step(&mut self, n: u32, of: u32, label: &str) {
         let now = self.now_epoch();
         if let Some(t0) = self.step_started.replace(now) {
@@ -314,22 +326,46 @@ impl OrchestrationOps for ProcessOps {
     }
 
     fn ssh_capture(&mut self, leg: Leg, remote_command: &str) -> Result<String, String> {
+        let composed = match leg {
+            Leg::Provisioning => self.pre_kexec(remote_command),
+            Leg::Reconnect => remote_command.to_string(),
+        };
         let mut cmd = std::process::Command::new("ssh");
-        cmd.args(self.leg_args(leg)).arg(remote_command);
+        cmd.args(self.leg_args(leg)).arg(&composed);
         Self::run_capture(cmd, &format!("ssh {remote_command:.60}"))
     }
 
     fn scp_stage(&mut self, local: &Path, remote_path: &str) -> Result<(), String> {
-        let mut cmd = std::process::Command::new("scp");
-        cmd.args(prod_scp_args(
-            &self.ip,
-            &self.ssh_identity,
-            &self.provisioning_known_hosts,
-            self.ssh_port,
-            local,
-            remote_path,
-        ));
-        Self::run_capture(cmd, &format!("scp {}", local.display())).map(|_| ())
+                                                                                                
+                                                                                               
+                                                                                               
+                                                                                               
+                                                                                             
+                                                                    
+        let path = super::prod::validate_stage_dir(remote_path)
+            .map_err(|e| format!("staged path {remote_path:?}: {e}"))?;
+        let file =
+            std::fs::File::open(local).map_err(|e| format!("open {}: {e}", local.display()))?;
+        let remote = self.pre_kexec(&format!("dd of={path} bs=1M status=none conv=fsync"));
+        let mut cmd = std::process::Command::new("ssh");
+        cmd.args(self.leg_args(Leg::Provisioning))
+            .arg(&remote)
+            .stdin(std::process::Stdio::from(file))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        arm_pdeathsig(&mut cmd);
+        let out = cmd
+            .output()
+            .map_err(|e| format!("spawn staging dd for {}: {e}", local.display()))?;
+        if !out.status.success() {
+            return Err(format!(
+                "staging {} to {path} exited {}: {}",
+                local.display(),
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(())
     }
 
     fn scp_image_bytes(&mut self, bytes: &[u8], remote_path: &str) -> Result<(), String> {
@@ -374,9 +410,9 @@ impl OrchestrationOps for ProcessOps {
                                                                                                       
                                                                                                      
                                                                                                 
-        let remote = format!(
+        let remote = self.pre_kexec(&format!(
             "dd of=/dev/{disk} oflag=seek_bytes seek={offset} conv=notrunc,fsync bs=1M status=none"
-        );
+        ));
         let mut cmd = std::process::Command::new("ssh");
         cmd.args(self.leg_args(Leg::Provisioning))
             .arg(&remote)
@@ -436,16 +472,21 @@ impl OrchestrationOps for ProcessOps {
                                                                                              
                                                                                                
                                      
+        let sync_remote = self.pre_kexec("sync");
         let mut sync_cmd = std::process::Command::new("ssh");
-        sync_cmd.args(self.leg_args(Leg::Provisioning)).arg("sync");
+        sync_cmd
+            .args(self.leg_args(Leg::Provisioning))
+            .arg(&sync_remote);
         Self::run_capture(sync_cmd, "ssh sync (pre-kexec)").map_err(|e| {
                                                                                                   
                                                                                                  
                                                                                                
             format!("pre-kexec sync on the target FAILED: {e}")
         })?;
+        let kexec_remote = self.pre_kexec("kexec -e");
         let mut cmd = std::process::Command::new("ssh");
-        cmd.args(self.leg_args(Leg::Provisioning)).arg("kexec -e");
+        cmd.args(self.leg_args(Leg::Provisioning))
+            .arg(&kexec_remote);
         arm_pdeathsig(&mut cmd);
         let out = cmd
             .output()
