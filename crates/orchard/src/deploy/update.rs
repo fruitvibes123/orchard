@@ -485,7 +485,7 @@ pub fn prepare_local_image(image: &Path, keys_dir: &Path) -> Result<PreparedPush
     if layout.firmware != Firmware::SeabiosGpt {
         return Err(format!(
             "update: refusing to push a {:?} image — the A/B update path is seabios-gpt only; an MBR \
-             box migrates once via the GPT takeover + restore-from, never a pushed update (row 16)",
+             box migrates once via the GPT takeover + restore-from, never a pushed update",
             layout.firmware
         ));
     }
@@ -641,7 +641,7 @@ pub fn run_ceremony(
     let before = parse_status(&ops.fb_update_status()?)?;
     if before.firmware != "seabios-gpt" {
         return Err(format!(
-            "update: the box reports firmware={:?}, not seabios-gpt — refusing (row 16)",
+            "update: the box reports firmware={:?}, not seabios-gpt — refusing",
             before.firmware
         ));
     }
@@ -2198,7 +2198,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.contains("not seabios-gpt") || err.contains("row 16"),
+            err.contains("not seabios-gpt"),
             "{err}"
         );
     }

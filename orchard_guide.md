@@ -8,7 +8,7 @@ set of pinned inputs into the box image triple. The box is the fruit-basket immu
 squashfs + dm-verity + IMA/EVM + an operator-signed `.img`). This guide covers producing that image
 (§1 to §8) and the operator ceremonies around a box that already exists: backup and restore (§11),
 the OS self-update (§12) and key rotation (§13). The first install is the guided
-ceremony: §14 is its map, `docs/guided-quickstart.md` the walkthrough.
+ceremony: §14 is its map, [`docs/guided-quickstart.md`](docs/guided-quickstart.md) the walkthrough.
 
 > Run every command below **from the orchard repo root** (your checkout of this repository) unless
 > stated otherwise. Commands are written as `orchard <verb>`; install the invocation shim once to
@@ -22,9 +22,10 @@ ceremony: §14 is its map, `docs/guided-quickstart.md` the walkthrough.
 > Without the shim, spell each as `cargo run -p orchard -- <verb>`.
 
 Two ways to use this. `orchard guide` runs the whole install ceremony (the container build, the
-keys, the pinned sources, the store, the image build, the gate and the install) as one interview;
-`docs/guided-quickstart.md` is that path, one page. This guide is the by-hand path and the
-reference: §4 to §6 are the same steps run one verb at a time, and §7 to §13 cover the variants,
+keys, the pinned sources, the artifact store, the image build, the boot gate and the install) as one interview;
+[`docs/guided-quickstart.md`](docs/guided-quickstart.md) is that path, one page. This guide is the by-hand path and the
+reference: §4 to §6 are the ceremony's steps 1 to 8 run one verb at a time, the install is
+`orchard prod` by hand (§5.1's profile form; §10 has the flags), and §7 to §13 cover the variants,
 the pins, backup and restore, the OS update and key rotation, which the ceremony does not do.
 
 **Names.** `recipes` is the reference tenant: the private web application the box was first built
@@ -34,6 +35,8 @@ to host. It names the image files (`recipes-image-<sha>.img`), the build contain
 stay when you bring your own application (§7); only the tenant changes. "The box" is the appliance
 OS, fruit-basket. `dha` is an optional AI co-tenant from private provider repositories; a default
 box does not bake it.
+
+**Contents.** [§1](#1-what-you-are-building) · [§2](#2-prerequisites) · [§3](#3-the-input-supply-chain) · [§4](#4-one-time-setup) · [§5](#5-build-the-image) · [§6](#6-verify-the-image) · [§7](#7-build-variants) · [§8](#8-maintenance--bumping-pins) · [§9](#9-troubleshooting) · [§10](#10-command-reference) · [§11](#11-backup--restore) · [§12](#12-os-self-update-ab-seabios-gpt--orchard-update) · [§13](#13-key-rotation) · [§14](#14-the-guided-ceremony--orchard-guide-orchard-run-orchard-admit)
 
 ---
 
@@ -60,11 +63,11 @@ A full build takes roughly **14 minutes** (most of it the from-source kernel com
 **Host toolchain**
 
 - `rustup` with the pinned stable toolchain. `rust-toolchain.toml` selects it automatically
-  (currently `1.96.0`, see `pins.toml [rust]`). For UEFI builds and `make verify`, add the loader
+  (currently `1.96.0`, see `pins.toml [rust]`). For UEFI builds, add the loader
   target once: `rustup target add x86_64-unknown-uefi`.
 - `git` — repo + worktree operations (`market store status` enumerates every worktree). Source
   tarballs are fetched and pin-verified **in-Rust** by `orchard prime` / `make prime` — no `curl`/
-  `tar`/`xz` host tooling is needed for source acquisition (the pre-2026-07 fetch scripts are
+  `tar`/`xz` host tooling is needed for source acquisition (the earlier fetch scripts are
   retired).
 - `openssh` (`ssh-keygen`) — operator pubkeys are derived, never copied.
 
@@ -73,8 +76,9 @@ the host (host builds would leak root-owned bind-mount artifacts). You need a wo
 invoke. `/tmp` needs ~15–20 GB free for one build.
 
 **For local boot verification** (`orchard dryrun`, `make boot-gate`) — `/dev/kvm` plus
-`qemu-system-x86_64`, `veritysetup` (cryptsetup), `ssh`, `curl`, `fakeroot`, and `mke2fs` (e2fsprogs)
-on the host.
+`qemu-system-x86_64`, `qemu-img`, `veritysetup` (cryptsetup), `ssh`, `curl`, `fakeroot`, and
+`mke2fs` (e2fsprogs) on the host. `veritysetup` and `ssh` are also used by `orchard prod` and
+`orchard update` (`doctor --for prod` does not probe `veritysetup`).
 
 **For UEFI / Secure Boot** (only if you build `--firmware uefi`) — `OVMF`/edk2 firmware blobs,
 `sbsign` (sbsigntool, in the container), and `virt-fw-vars` for the enrolled-VARS gate.
@@ -158,8 +162,9 @@ key set (additive; safe to run over an existing cert set):
 cargo run -p orchard -- generate-keys --artifact-signing software
 ```
 
-> **Redelegate-before-build (update path).** A fresh key set mints every purpose
-> delegation, including `UpdateImage`/`RootHash`. Any artifact key set minted **before**
+> **Redelegate-before-build (update path).** A delegation is a signed grant from the artifact
+> root key to one purpose key (`UpdateImage`, `RootHash`, `Backup`, …), so the root stays cold.
+> A fresh key set mints every purpose delegation, including `UpdateImage`/`RootHash`. Any artifact key set minted **before**
 > the OS-update path (including the live box's) lacks those two — and since `orchard build`
 > bakes the `UpdateImage` delegation's `monotonic_ctr` as the image's `min_delegation_ctr`,
 > **every** build/sign on such a set fails closed with an actionable error. The one-command
@@ -195,9 +200,11 @@ vendored source drops from `vendor/`.
 
 **This public checkout ships `vendor/` populated and pinned** — the four source drops
 (grape/dragonfruit/fb-manifest/rambutan) are committed, and `consume-pins.toml`'s `*-src` rows
-assert exactly these bytes (the bake re-verifies them at every start), so no store or vendoring
-step is needed for the source-compiled parts. Re-vendoring (`orchard vendor`) is a pin-bump flow
-that expects the owning repos' publish tooling (operator-side, not part of the public trees).
+assert exactly these bytes (the bake re-verifies them at every start), so the by-hand path (§5)
+needs no store or vendoring step for the source-compiled parts. The guided ceremony is different:
+its step 4 runs `orchard vendor`, which fetches the four drops from the store, so on a public
+checkout the ceremony stops there (the quickstart states the scope). Re-vendoring is a pin-bump
+flow that expects the owning repos' publish tooling (operator-side, not part of the public trees).
 
 **Binaries are yours to build and publish.** The public fruit-basket and seed-vault repos hold
 the full source; clone them side by side (fruit-basket's crates path-dep seed-vault as a sibling
@@ -214,7 +221,7 @@ cargo run -p orchard -- market upgrade --binary fb-acme \
 ```
 
 A box hosting the optional AI co-tenant additionally needs its artifacts (the `creatine-serve`,
-`dha-orchestrator`, `epa` and `dha-*` entries in `consume-pins.toml`), published via grocer from
+`dha-orchestrator`, `epa`, `uds-pipe` and `dha-*` entries in `consume-pins.toml`), published via grocer from
 private provider repositories that are not part of this release. A default box does not
 bake them, but `market verify --all` expects every entry in `consume-pins.toml` present.
 
@@ -225,9 +232,9 @@ contract. Build any musl binary that serves the manifest's edge backend, publish
 consume-pins key (`market upgrade --binary … --build-dir …`), author your manifest, and publish
 it (`market upgrade --config service-manifest`).
 
-The dha co-tenant trio (`creatine-serve`/`dha-orchestrator`/`epa`) comes from private provider
-repos; a default single-tenant box does not bake them (`market verify --all` is the operator-side
-check that expects all 16 artifacts).
+The co-tenant entries come from private provider repositories; a default single-tenant box does
+not bake them (`market verify --all` is the operator-side check that expects every entry in
+`consume-pins.toml` present; the count is that file's).
 
 > If a publish changes an artifact, re-pin its sha in `consume-pins.toml` (copy from the owning
 > repo's `published-pins.toml`, or let `market upgrade` write it) before building — the bake
@@ -358,7 +365,7 @@ write** and chunk-copies window → partitions with per-component `O_DIRECT` rea
 O(8 MiB chunk) on **both** sides — an image larger than the target's RAM installs fine (the old
 whole-image RAM preflight is retired; only a fixed 256 MiB installer floor remains).
 
-**The two honest costs, stated plainly:**
+**The three honest costs, stated plainly** (the tool prints the same three before the erase):
 
 - **The point of no return moves to "staging begun".** The window sits in the doomed Debian's
   free space while Debian is live — "any pre-kexec abort leaves the old system bootable" weakens
@@ -369,6 +376,11 @@ whole-image RAM preflight is retired; only a fixed 256 MiB installer floor remai
   staged window occupies `image_size` bytes of what becomes the persist partition's tail. The
   space is **reclaimed as ordinary free space after the first-boot grow** (ext4 never reads
   unallocated blocks; the residue is your own image's bytes).
+- **The install-time trust base:** the installer is staged on, and verified by, the machine you
+  run the ceremony from. A compromised provisioning host controls the installer and can defeat
+  every post-install check, since those run as installed code. Run the ceremony from a fresh,
+  uncompromised host; the staged-artifact hashes raise the bar and do not close it (a documented
+  debt; the structural close is a sovereign substrate).
 
 **Diagnosis rule (window contention):** a ceremony that repeatedly aborts at the installer's
 pre-table digest check *after clean staging readbacks* means the live Debian's allocation or
@@ -398,7 +410,8 @@ cargo run -p orchard -- doctor --for boot-gate --image <img>   # incl. an env sk
 ```
 
 `--for <verb>` narrows the report to `build` / `dryrun` / `prod` / `boot-gate`; the `boot-gate` scope
-ends with the exact `RECIPES_*` env the gate needs so you can copy-paste it.
+ends with a `RECIPES_*` env skeleton for the image legs to copy-paste; the restore, e2e and UEFI
+legs add their own variables (named in the `Makefile` beside each leg).
 
 ### Quick boot smoke — `orchard dryrun`
 
@@ -414,18 +427,24 @@ cargo run -p orchard -- dryrun --image <img> --keep-running              # leave
 ### Produced-bytes proof — `make boot-gate`
 
 The full SeaBIOS install → boot → rescue + crash-recovery chain on the real image. This is the gate
-that has repeatedly caught what static review missed. It needs docker + `/dev/kvm` and the built
-image(s) in the environment:
+that has repeatedly caught what static review missed. Its first four legs (the grocer atomicity
+gate, the binary-publish gate, the kernel-upgrade and rust-upgrade gates) drive the operator's
+sibling checkouts named in `repo-manifest.toml`, one of them with publish tooling that is not in
+the public fruit-basket tree, so on a public clone the target stops at those legs; the image
+legs below them need docker + `/dev/kvm`, the built image(s) and their keys in the environment
+(the `boot-gate` target in the `Makefile` documents each leg's own needs):
 
 ```sh
 RECIPES_DRYRUN_IMG=<img> \
 RECIPES_PROD_IMG=<img>   RECIPES_PROD_PRIVKEY=<key> \
 RECIPES_RESCUE_IMG=<img> RECIPES_RESCUE_PRIVKEY=<key> \
+RECIPES_RESTORE_IMG=<img> RECIPES_RESTORE_PRIVKEY=<key> RECIPES_RESTORE_KEYS_DIR=<dir> \
 make boot-gate
 ```
 
-(The dryrun leg takes only `RECIPES_DRYRUN_IMG`; prod/rescue each also need their `_PRIVKEY`. The
-`deploy_prod_e2e` leg additionally needs `RECIPES_PROD_E2E_DEBIAN_IMG` + `cloud-localds`.) The
+(The dryrun leg takes only `RECIPES_DRYRUN_IMG`; prod/rescue each also need their `_PRIVKEY`; the
+restore leg needs its three. The `deploy_prod_e2e` leg additionally needs
+`RECIPES_PROD_E2E_DEBIAN_IMG`, `cloud-localds` and `qemu-img`.) The
 gates panic if run without their env, so a run never silently false-greens.
 
 ### Determinism self-test — `orchard build --verify`
@@ -484,7 +503,7 @@ lifecycle; each leg does the mechanical work and leaves you the reviewable diff:
 
 | verb | question it answers | semantics |
 |------|---------------------|-----------|
-| `orchard market verify` | is the pin store consistent + authentic right now? | the fail-closed gate (`make verify` runs it) |
+| `orchard market verify` | is the pin store consistent + authentic right now? | the fail-closed gate; a standalone target here (`make market-verify`), which the published `make verify` does not run |
 | `orchard market outdated` | what has drifted / will 404? | advisory report; `--exit-drift` = a CI/cron nag (an unreachable mirror still exits 0); `--all-packages` = the whole closure |
 | `orchard market upgrade --<leg>` | fix it | stage → staged `market verify` → swap → the consent gate |
 
@@ -492,7 +511,8 @@ Pinned apks age off dl-cdn on a clock (the mirror garbage-collects superseded re
 pinned box eventually hits `linux-virt: HTTP 404`-class drift: `market outdated` names it before a
 build does, and a failed build's apk-404 error names the drift + the cure itself. `market upgrade
 --apks --dry-run` previews the outcome (the pinned→mirror-current moves) before the container
-re-resolution; `--container-image` defaults to the digest-pinned build container from `pins.toml`.
+re-resolution; for `--apks` and `--all`, `--container-image` defaults to the digest in `pins.toml [rust].container_digest`
+(pass it only to override); the other legs accept the flag and ignore it.
 
 After a green swap, `market upgrade` shows the diff surface (`git diff --stat` per repo) plus a
 commit message composed from the pin-file deltas, then asks `commit the orchard paths? [y = commit /
@@ -511,7 +531,9 @@ The manual procedures below remain the fallback / inner mechanism:
    - syslinux: re-pin over the upstream tarball (a major bump also needs the
      `Testing/<major.minor>/` URL segment updated in `SYSLINUX_ORG_BASE`,
      `crates/image-builder/src/sources.rs` — the retired fetch script's URL, typed).
-   - rust: re-pin `container_digest` via `docker manifest inspect rust:<maj>.<min>-alpine`.
+   - rust: `container_digest` is written by `market upgrade --rust` from the rebuilt build
+     container's image id; it has no manual source (the build container is a self-assembled
+     Alpine, not a Docker Hub Rust image).
 2. `cargo run -p orchard -- sync-pins` — regenerates `rust-toolchain.toml` + the container `FROM`.
 3. `make verify` — the drift-check confirms every consumer agrees.
 4. Re-fetch the source (§4.3) and rebuild the container (§4.1) for kernel/syslinux/rust bumps.
@@ -575,7 +597,7 @@ do not flip it before then.
 | `config-virt not found in the pinned linux-virt apk` | the apk closure is stale — `refresh-apk-lock`. |
 | `docker build` fails on an apk version | a mirror superseded a pinned patch — bump the version in the Containerfile intentionally. |
 | `No space left on device` during cargo/kernel build | `/tmp` filled (needs ~15–20 GB). Clear leaked root-owned tempdirs: `docker run --rm -v /tmp:/t recipes-imgbuild:dev sh -c 'rm -rf /t/.tmp*'`. |
-| `repository-form-unmodelled` (guided ceremony) | the checkout's git configuration is not ratified, differs from the ratified declared space, or its ratified file cannot be read; the printed cure names the step (`orchard admit`, revert, or restore the file). `docs/guided-quickstart.md` § Stops about the checkout's form. |
+| `repository-form-unmodelled` (guided ceremony) | the checkout's git configuration is not ratified, differs from the ratified declared space, or its ratified file cannot be read; the printed cure names the step (`orchard admit`, revert, or restore the file). [`docs/guided-quickstart.md`](docs/guided-quickstart.md) § Stops about the checkout's form. |
 | `git-state-unreadable` … `bytes outside UTF-8` (guided ceremony) | a file name or configuration key in the checkout is outside UTF-8; the sample in the detail names it. Rename to UTF-8, re-run. |
 
 ### 9.1 Reclaim-tail manual disarm (rows `R-ARMED` / `R-DISARM`)
@@ -595,17 +617,28 @@ hand, on the target, in three steps — **all three are required**:
 3. Verify the script is gone from every built initrd, failing CLOSED if an initrd cannot be read (an
    empty glob or an `lsinitramfs` error must NOT read as clean — that is the positive control the
    automated disarm carries, `post.rs` `DISARM_VERIFY_CMD`; a bare `grep -c … = 0` prints `0` when
-   the listing failed, and `R-DISARM` is exactly the unreadable-initrd case):
+   the listing failed; `R-DISARM` covers every case where the disarm could not be verified, the
+   unreadable initrd among them):
    ```
+   n=0
    for f in /boot/initrd.img-*; do
-     [ -e "$f" ] || { echo "$f: NO INITRD -> treat as ARMED"; continue; }
-     lsinitramfs "$f" >/tmp/ls-$$ 2>/dev/null || { echo "$f: lsinitramfs FAILED -> treat as ARMED"; continue; }
-     grep -q local-premount/orchard-reclaim /tmp/ls-$$ && echo "$f: STILL ARMED" || echo "$f: clean"
-   done; rm -f /tmp/ls-$$
+     [ -e "$f" ] || continue
+     v=${f#/boot/initrd.img-}
+     [ -e "/boot/vmlinuz-$v" ] || [ -e "/boot/vmlinux-$v" ] || continue   # no kernel: a stale copy, not bootable
+     n=$((n+1))
+     if out=$(lsinitramfs "$f" 2>/dev/null); then
+       case "$out" in *scripts/local-premount/orchard-reclaim*) echo "$f: STILL ARMED";; *) echo "$f: clean";; esac
+     else echo "$f: lsinitramfs FAILED -> treat as ARMED"; fi
+   done
+   echo "PAIRED:$n"
    ```
-   Every line must read `clean`. Any `ARMED` line means the target is not disarmed.
+   The loop carries the two rules of the automated check (`post.rs`, `DISARM_VERIFY_CMD` and its
+   parser): only initrds paired with an installed kernel count, and nothing checkable is not
+   clean. The target is disarmed only when every initrd line reads `clean` AND the last line is
+   `PAIRED:` with a count of at least 1; `PAIRED:0` means no kernel-paired initrd could be checked
+   and the automated check treats that as still armed.
 
-Do NOT reboot the box until every line reads `clean`. Deleting the two files without step 2 leaves
+Do NOT reboot the box until every initrd line reads `clean` and `PAIRED:` is at least 1. Deleting the two files without step 2 leaves
 the already-built initrd armed: it re-runs `e2fsck` + `resize2fs` on the next boot, unattended.
 
 Access: on an `R-ARMED` or unreachable target ssh may be down, so reach the box over your provider's
@@ -634,7 +667,7 @@ to the target.
 | `orchard market upgrade [--source <key> \| --binary <key> \| --config <key> \| --apks \| --kernel <version> \| --rust <version> \| --all] [--commit]` | re-pin a supply-chain leg (verify → stage → swap → authorize). |
 | `orchard guide <profile> [--repo-form-dir <dir>]` | the guided install ceremony: parameter interview, profile, one authorize, uninterrupted run. |
 | `orchard run <profile> --target <ip> [--repo-form-dir <dir>]` | re-run the ceremony over a saved profile; done steps SKIP. |
-| `orchard admit --box <profile> [--repo-form-dir <dir>]` | ratify a box's declared space: measure each named checkout's git configuration (every scope-qualified key; the value at the program-valued keys git executes inside the gate's commands), show the diff, write after an explicit typed authorize. Never runs a ceremony. Ratify after the first `guide` writes the profile, then before every `guide`/`run` and after any git configuration change; `docs/guided-quickstart.md` § Ratify the declared space. |
+| `orchard admit --box <profile> [--repo-form-dir <dir>]` | ratify a box's declared space: measure each named checkout's git configuration (every scope-qualified key; the value at the program-valued keys git executes inside the gate's commands), show the diff, write after an explicit typed authorize. Never runs a ceremony. Ratify after the first `guide` writes the profile, then before every `guide`/`run` and after any git configuration change; [`docs/guided-quickstart.md`](docs/guided-quickstart.md) § Ratify the declared space. |
 | `orchard redelegate [--purpose all \| update-image \| root-hash \| weights]` | re-mint purpose delegations over the existing artifact root (§4.2, §13.2). |
 | `orchard update <host> --image <img> --identity <key> [--host-fingerprint SHA256:…]` | push a signed OS image to a running seabios-gpt box (§12). |
 | `orchard status <host> --ssh-identity <key> [--image <img>] [--keys-dir <dir>]` | read-only box inspection + drift comparison (§12, §13.3). |
@@ -667,7 +700,7 @@ machine re-executes the artifact steps rather than trusting a record about bytes
 That is the behaviour, not a claim about it: the realizing arm is
 `ceremony_runner::step_done_is_identity_bound_and_re_executes_when_the_artifact_is_gone` (records
 intact, out_dir emptied ⇒ the step re-executes). Parallel batch and cross-host concurrency are
-out of scope here (spec Q2).
+out of scope here.
 
 **Invocation form.** Every command in this table, and every `next:` hint the tool prints, is written
 as `orchard <verb>`. Install the shim to make that form true from anywhere inside a checkout:
@@ -677,12 +710,10 @@ cargo build --release -p orchard-shim
 cp target/release/orchard-shim ~/.local/bin/orchard        # the shim installs UNDER the name `orchard`
 ```
 
-The shim walks up from the working directory to the checkout, builds `orchard` once, and execs it
-with your argv — so signals, exit codes and the terminal all belong to the real binary. Bound: it still requires a CHECKOUT; outside one it refuses and says so. Six verbs read and
+The shim walks up from the working directory to the checkout, runs `cargo build --release -p orchard`
+there on every invocation (a short no-op when nothing changed), and execs the result with your argv — so signals, exit codes and the terminal all belong to the real binary. Bound: it still requires a CHECKOUT; outside one it refuses and says so. Six verbs read and
 never write, so you may also install them as ordinary binaries: `doctor`, `status`,
-`derive-rescue-offline`, `market verify`, `market outdated`, `market store status`. No
-artifact-producing verb is installable, because what it produces must be pinned to the checkout it
-was built from.
+`derive-rescue-offline`, `market verify`, `market outdated`, `market store status`.
 
 For the authoritative flag set, see `orchard <cmd> --help` and the source under
 `crates/orchard/src/`. The gate discipline lives in the `Makefile` headers.
@@ -848,7 +879,7 @@ the old anchor. When the root is COMPROMISED (not merely being cycled) the takeo
 but REQUIRED: any live-continuity path would honour attacker-reachable trust for one more hop.
 
 1. Mint a fresh root into a NEW keys dir (never overwrite the old in place): `orchard generate-keys
-   --artifact-signing` with a new `--output-dir`.
+   --artifact-signing software --output-dir <new-dir>`.
 2. Build a fresh image (it bakes the NEW `artifact-root.pub`).
 3. **Under the NEW keys dir, FIRST** assemble + sign the restore bundle: `orchard restore-image
    --operator-pubkey <login.pub>` (stage the operator pubkey out-of-band), then `orchard sign-backup`
@@ -904,19 +935,20 @@ the intended login state differs from what the staged pubkey established.
 
 The ceremony conducts the whole first install as one resumable run: the container build, the
 operator keys, the pinned sources, the artifact store, the tenant publish and re-pin, the image
-bake, the boot gate, the box preflight, the install and the post-boot check. `docs/guided-quickstart.md`
+bake, the boot gate, the box preflight, the install and the post-boot check. [`docs/guided-quickstart.md`](docs/guided-quickstart.md)
 is the walkthrough; this section is the map.
 
 | Verb | What it does |
 |---|---|
 | `orchard guide boxes/<name>.toml` | the interview: confirms the target, asks each parameter once (resolved values are shown to confirm), writes the profile before anything executes, asks for the one destructive authorization (`--wipe-confirmed`, typed exactly), prints the plan, then executes. |
-| `orchard run boxes/<name>.toml --target <host>` | re-runs the ceremony over a saved profile; every step whose work is already recorded is skipped, so a run that stopped resumes where it stopped. The image version is re-asked on every invocation. |
+| `orchard run boxes/<name>.toml --target <host>` | re-runs the ceremony over a saved profile; every step whose work is already recorded is skipped, so a run that stopped resumes where it stopped. The image version is a flag on every invocation whose image build is still owed, never read from the profile. |
 | `orchard admit --box boxes/<name>.toml` | ratifies the checkout's git configuration (every scope-qualified key, and the value of every key whose value names a program git would run) into `boxes/repo-form/`; the ceremony refuses to commit through a configuration you did not ratify. Re-run after any git configuration change. |
 
 **Stops.** Every stop names what is owed and the exact command that resumes. Exit 0 is done
 (including a run where every step was already done); 2 is refused, with the cure printed; 3 to 6
 are an action owed by you (a commit gate, a sibling checkout, an external step, the destructive
-authorization); 1 is a step that failed, with its own output. `--porcelain` emits one record per
+authorization); 1 is a step that failed, with its own output; 101 (141 on a closed pipe) is a
+crash of the tool itself, with no record written. `--porcelain` emits one record per
 line for wrappers. A headless run commits only under a typed token and only content the ceremony
 itself wrote.
 
@@ -924,6 +956,6 @@ itself wrote.
 travel with them, so a second machine re-executes the artifact steps rather than trusting a record
 about bytes it cannot see.
 
-**Relation to the by-hand path.** §4 to §6 are the same steps one verb at a time, and the ceremony
-calls the same code. What the ceremony does not do, and this guide does, is §7 to §13: the build
+**Relation to the by-hand path.** §4 to §6 are steps 1 to 8 one verb at a time, `orchard prod`
+(§5.1, §10) is step 10 by hand, and the ceremony calls the same code. What the ceremony does not do, and this guide does, is §7 to §13: the build
 variants, the pins, backup and restore, the OS update and key rotation.

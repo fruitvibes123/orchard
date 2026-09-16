@@ -2,6 +2,7 @@
 name = "orchard-shim"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-2.0-only"
 
 [dependencies]
 # The shim reads the built binary's path from `cargo build --message-format=json`'s `executable`

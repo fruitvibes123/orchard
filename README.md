@@ -40,12 +40,14 @@ co-tenant from private provider repositories; a default box does not bake it.
 | `crates/grocer` | the content-addressed artifact-store publisher (fail-closed key+kind cross-checks, ELF/linkage asserts) |
 | `crates/cashew` | pure-Rust verify-only OpenPGP/RSA detached-signature checker (kernel.org source verification) |
 | `crates/syslinux-install` | the BIOS bootloader install helper |
+| `crates/orchard-shim` | the invocation shim: installed as `orchard`, it runs `cargo build` for the CLI in the checkout on every invocation and execs the result |
 | `vendor/` | committed, sha256-pinned source drops consumed by the bake: `grape` + `dragonfruit` ([seed-vault](https://github.com/fruitvibes123/seed-vault)), `fb-manifest` + `rambutan` ([fruit-basket](https://github.com/fruitvibes123/fruit-basket)) |
 
 Together with the published fruit-basket and seed-vault repositories this closes the build loop:
 clone the three side by side, build the container, generate keys, build + publish the
 fruit-basket binaries into your local artifact store, bring your own application backend per the
-service-manifest schema, and bake a bootable image — the guide's §2–§6 is exactly that path.
+service-manifest schema, and bake a bootable image — the guide's §2 to §7 is that path, and
+`orchard prod` (§5.1) the install.
 
 ## About this repository
 
@@ -59,9 +61,13 @@ equivalence-gated release tool:
   gate proves per-file token-stream identity, doc-comment byte-identity, and per-workspace
   compile checks inside the pinned container — not binary equivalence (that gate belongs to the
   repos whose binaries ship).
-- **Some internal references were removed for publication**; an occasional bare section
-  reference (`§n.m`) points into the operator's internal specifications and is retained where
-  the surrounding text carries the substance.
+- **Some internal references remain.** Wherever a doc comment, a config or shell comment, or a
+  CLI help string cites the operator's private specifications, audit reports, plans, tasks or
+  decision records (bare `§n.m` section references, finding ids such as `audit R1 F-3`, task and
+  component numbers, dated spec and decision names), the citation is kept where the surrounding
+  text carries the substance. None of those documents is published, so no such reference
+  resolves in this tree; each names the record behind the decision beside it. Identifiers this
+  tree defines (refusal rows such as `R-DISARM`, constants, test names) are not in that class.
 - **The published `make verify` differs from the canonical one** in two declared ways (see the
   Makefile header): no `fmt-check` (padding is not rustfmt-clean) and no `market-verify` (it
   reads the operator's private pin-store ecosystem).
@@ -75,7 +81,9 @@ equivalence-gated release tool:
 the Fruit Basket OS, relicensed to match the OS it builds: GPLv2 (not v3/AGPL — the box's
 verified-boot model is the "tivoization" GPLv3 forbids), `-only` not `-or-later`.
 
-Scope: Orchard's own crates (`image-builder`, `orchard`, `syslinux-install`, `grocer`,
-`cashew`). The vendored pinned source drops under `vendor/` keep their upstream licenses
-(`grape`/`dragonfruit`: seed-vault's; `fb-manifest`/`rambutan`: fruit-basket's GPL-2.0-only) and
-are not relicensed here.
+Scope: Orchard's own crates (`image-builder`, `orchard`, `orchard-shim`, `syslinux-install`,
+`grocer`, `cashew`). The vendored pinned source drops under `vendor/` keep their upstream licenses
+and are not relicensed here: `grape` is `MIT OR Apache-2.0` (the license texts are
+[LICENSE-MIT](https://github.com/fruitvibes123/seed-vault/blob/main/LICENSE-MIT) and
+[LICENSE-APACHE](https://github.com/fruitvibes123/seed-vault/blob/main/LICENSE-APACHE) in the
+seed-vault repository); `dragonfruit`, `fb-manifest` and `rambutan` are `GPL-2.0-only`.
