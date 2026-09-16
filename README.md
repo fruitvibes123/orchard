@@ -18,17 +18,25 @@ touch the host toolchain. The kernel is built from source (`CONFIG_MODULES=n` an
 integrity built-ins require it), the image assembles deterministically, and the produced-bytes
 boot gates prove install → boot → serve → crash-recover on the real image under QEMU/KVM.
 
-**Start here: [`orchard_guide.md`](orchard_guide.md)** — the end-to-end walkthrough from
-prerequisites through container build, key bootstrap, source priming, artifact publishing,
-`orchard build`, and `orchard dryrun`, plus maintenance (pin bumps), troubleshooting, backup +
-restore, A/B self-update, and key rotation.
+**Start here: [`docs/guided-quickstart.md`](docs/guided-quickstart.md)** — the guided ceremony
+installs a box as one resumable run: `orchard guide` interviews you once and writes a profile,
+`orchard run` conducts the whole lifecycle from container build to post-boot check with consent
+gates before anything commits or touches a disk, `orchard admit` ratifies the checkout's git
+configuration. **The reference: [`orchard_guide.md`](orchard_guide.md)** — the same steps by hand
+(§4 to §6), the ceremony's map (§14), the build variants, maintenance (pin bumps),
+troubleshooting, backup + restore, A/B self-update, and key rotation.
+
+**Names.** `recipes` is the reference tenant, the private web application the box was first built
+to host; it names the image files, the build container, the `RECIPES_*` gate variables and the
+key directory, and those names stay when you bring your own application. `dha` is an optional AI
+co-tenant from private provider repositories; a default box does not bake it.
 
 ## Components
 
 | Crate | Role |
 |---|---|
 | `crates/image-builder` | the `.img` pipeline: apk acquisition, kernel bake, rootfs/boot-fs/persist assembly, service-manifest rendering, IMA/EVM signing, verity sealing |
-| `crates/orchard` | the operator CLI: `build`, `dryrun`, `prod` (the install ceremony), `update`, `doctor`, `prime`, `vendor`, `market` (the pin-store tool), key generation + rotation |
+| `crates/orchard` | the operator CLI: `guide` / `run` / `admit` (the guided ceremony), `build`, `dryrun`, `prod` (the install step), `update`, `doctor`, `prime`, `vendor`, `market` (the pin-store tool), key generation + rotation |
 | `crates/grocer` | the content-addressed artifact-store publisher (fail-closed key+kind cross-checks, ELF/linkage asserts) |
 | `crates/cashew` | pure-Rust verify-only OpenPGP/RSA detached-signature checker (kernel.org source verification) |
 | `crates/syslinux-install` | the BIOS bootloader install helper |

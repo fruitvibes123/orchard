@@ -4,13 +4,13 @@ How to build a box `.img` with Orchard, end to end: prerequisites, one-time setu
 command, how to verify the result, the build variants, and how to keep the pins fresh.
 
 Orchard is the operator-host build/deploy factory. `orchard build` turns the operator key set plus a
-set of pinned inputs into the box image triple. The box is the Plan 3.4v2 immutable distro (read-only
+set of pinned inputs into the box image triple. The box is the fruit-basket immutable OS (read-only
 squashfs + dm-verity + IMA/EVM + an operator-signed `.img`). This guide covers producing that image
 (§1 to §8) and the operator ceremonies around a box that already exists: backup and restore (§11),
-the OS self-update (§12) and key rotation (§13). The first install is `orchard guide`:
-`docs/guided-quickstart.md`.
+the OS self-update (§12) and key rotation (§13). The first install is the guided
+ceremony: §14 is its map, `docs/guided-quickstart.md` the walkthrough.
 
-> Run every command below **from the orchard repo root** (`Projects/fruit-ecosystem/orchard`) unless
+> Run every command below **from the orchard repo root** (your checkout of this repository) unless
 > stated otherwise. Commands are written as `orchard <verb>`; install the invocation shim once to
 > make that form work from anywhere inside a checkout (§10 § Invocation form):
 >
@@ -26,6 +26,14 @@ keys, the pinned sources, the store, the image build, the gate and the install) 
 `docs/guided-quickstart.md` is that path, one page. This guide is the by-hand path and the
 reference: §4 to §6 are the same steps run one verb at a time, and §7 to §13 cover the variants,
 the pins, backup and restore, the OS update and key rotation, which the ceremony does not do.
+
+**Names.** `recipes` is the reference tenant: the private web application the box was first built
+to host. It names the image files (`recipes-image-<sha>.img`), the build container
+(`recipes-imgbuild:dev`), the `RECIPES_*` gate variables, the key directory
+(`~/.config/recipes-deploy`) and the kernel staging directory (`/tmp/recipes-kbuild`). Those names
+stay when you bring your own application (§7); only the tenant changes. "The box" is the appliance
+OS, fruit-basket. `dha` is an optional AI co-tenant from private provider repositories; a default
+box does not bake it.
 
 ---
 
@@ -98,13 +106,13 @@ Two things make this a *pinned* supply chain:
   + sha256). It is the one place to bump those; `orchard sync-pins` propagates the rust pin into
   `rust-toolchain.toml` and the container `FROM`.
 - **`consume-pins.toml`** lists every artifact the bake pulls from the operator **artifact store** —
-  the in-image binaries (recipes-app, fb-*, box-init, the dha tenant's
-  creatine-serve/dha-orchestrator/epa, …), the service-manifest, and the vendored source drops — each
+  the in-image binaries (the tenant's `recipes-app`, `fb-*`, `box-init`, the optional AI
+  co-tenant's `creatine-serve`/`dha-orchestrator`/`epa`, …), the service-manifest, and the vendored source drops — each
   by sha256 (the count and the split are `consume-pins.toml`'s). The bake verifies
   every input against this and **refuses on mismatch or absence**. The shas are copied from each owning
   repo's `published-pins.toml`.
 
-The artifact store defaults to `Projects/fruit-ecosystem/artifact-store` (i.e. `<orchard>/../artifact-store`);
+The artifact store defaults to `<orchard>/../artifact-store`, the directory beside the checkout;
 override with `FRUIT_ARTIFACT_STORE`. All the owning repos publish to the same default path.
 
 ---
@@ -205,9 +213,9 @@ cargo run -p orchard -- market upgrade --binary fb-acme \
 #                 box-init initramfs-init
 ```
 
-The dha-hosting box additionally needs the dha-tenant artifacts (the `creatine-serve`,
+A box hosting the optional AI co-tenant additionally needs its artifacts (the `creatine-serve`,
 `dha-orchestrator`, `epa` and `dha-*` entries in `consume-pins.toml`), published via grocer from
-their own provider repos (`../../creatine`, `../../dha`, `../../epa`). A default recipes box doesn't
+private provider repositories that are not part of this release. A default box does not
 bake them, but `market verify --all` expects every entry in `consume-pins.toml` present.
 
 **The app tenant is bring-your-own.** The reference tenant (a private web app) is not published.
@@ -281,7 +289,7 @@ input. See §9.
 ### 5.1 Profiles — build a named box without retyping its flags
 
 A **profile** is a small whitelist TOML that carries a box's stable build values so you type one
-intent, not a flag wall. `orchard build --profile boxes/rezepte.toml` supplies `domain`, `net`,
+intent, not a flag wall. `orchard build --profile boxes/mybox.toml` supplies `domain`, `net`,
 `keys_dir`, `out_dir`, `firmware`, `image_version`, `container_image`, `manifest` and
 `dha_weights_gguf`; a flag you ALSO pass on the command line WINS over the profile (flag >
 profile > built-in default). A profile written by `orchard guide` carries `image_version` and
@@ -305,7 +313,7 @@ A named box's whole deploy then collapses to one intent — the profile carries 
 the destructive wipe stays a live flag you type every time (it can never live in the profile):
 
 ```sh
-orchard prod 203.0.113.5 --profile boxes/rezepte.toml --wipe-confirmed
+orchard prod 203.0.113.5 --profile boxes/mybox.toml --wipe-confirmed
 ```
 
 **Profile schema version.** A profile may carry `schema_version`; absent means v1, so every
@@ -439,7 +447,7 @@ before trusting `vendor/`.
 
 ## 7. Build variants
 
-**SeaBIOS vs UEFI** — `--firmware seabios` (default; Infomaniak is BIOS-only) or `--firmware uefi`
+**SeaBIOS vs UEFI** — `--firmware seabios` (default; the reference VPS host is BIOS-only) or `--firmware uefi`
 (the rambutan Secure Boot loader path, OVMF-boot-proven; production on real UEFI hardware is
 substrate-gated). UEFI builds emit the extra `loader.efi` + `sign-manifest.toml` sidecars.
 
@@ -525,8 +533,8 @@ resulting pin diffs.
 content-addressed: every publish writes an additive `<key>@<sha256(bytes)>` revision blob
 alongside (while the dual-write transition holds) the legacy flat `<key>` alias. This is what makes
 parallel publishes safe by construction — a second worktree publishing a different revision of the
-same key can never clobber the first (the incident this closes: a 2026-07-07 dha-branch publish
-silently overwrote another stream's expected bytes under the old flat layout). Three verbs, all
+same key can never clobber the first (the incident this closes: a publish from one worktree
+silently overwrote another worktree's expected bytes under the old flat layout). Three verbs, all
 advisory/maintenance — never a `market verify` leg:
 
 | verb | question it answers | semantics |
@@ -549,7 +557,7 @@ which re-hashes the store bytes your own checkout's pins resolve, fail-closed.
 **The dual-write alias is a transition, not the permanent shape.** It exists so pre-CAS binaries
 (old parallel-worktree publishes) keep working unmodified. Retiring it (flip
 `DUAL_WRITE_FLAT_ALIAS` to `false` in `artifact_store.rs`, delete the alias branch + the prune
-alias guard) is a named follow-up, gated on the dha and bench streams rebasing past this cycle —
+alias guard) is a named follow-up, gated on every publisher having moved to the content-addressed layout —
 do not flip it before then.
 
 ---
@@ -670,8 +678,7 @@ cp target/release/orchard-shim ~/.local/bin/orchard        # the shim installs U
 ```
 
 The shim walks up from the working directory to the checkout, builds `orchard` once, and execs it
-with your argv — so signals, exit codes and the terminal all belong to the real binary. Bound
-(C8 debt 2): it still requires a CHECKOUT; outside one it refuses and says so. Six verbs read and
+with your argv — so signals, exit codes and the terminal all belong to the real binary. Bound: it still requires a CHECKOUT; outside one it refuses and says so. Six verbs read and
 never write, so you may also install them as ordinary binaries: `doctor`, `status`,
 `derive-rescue-offline`, `market verify`, `market outdated`, `market store status`. No
 artifact-producing verb is installable, because what it produces must be pinned to the checkout it
@@ -890,3 +897,33 @@ A `orchard prod --restore-from` takeover authorizes the operator pubkey the cere
 captures `/persist/etc`, so a pre-rotation backup can re-introduce pre-rotation key state depending on the
 assembler's precedence. Conservative posture: after any `--restore-from`, re-run `orchard rotate-key` if
 the intended login state differs from what the staged pubkey established.
+
+---
+
+## 14. The guided ceremony — `orchard guide`, `orchard run`, `orchard admit`
+
+The ceremony conducts the whole first install as one resumable run: the container build, the
+operator keys, the pinned sources, the artifact store, the tenant publish and re-pin, the image
+bake, the boot gate, the box preflight, the install and the post-boot check. `docs/guided-quickstart.md`
+is the walkthrough; this section is the map.
+
+| Verb | What it does |
+|---|---|
+| `orchard guide boxes/<name>.toml` | the interview: confirms the target, asks each parameter once (resolved values are shown to confirm), writes the profile before anything executes, asks for the one destructive authorization (`--wipe-confirmed`, typed exactly), prints the plan, then executes. |
+| `orchard run boxes/<name>.toml --target <host>` | re-runs the ceremony over a saved profile; every step whose work is already recorded is skipped, so a run that stopped resumes where it stopped. The image version is re-asked on every invocation. |
+| `orchard admit --box boxes/<name>.toml` | ratifies the checkout's git configuration (every scope-qualified key, and the value of every key whose value names a program git would run) into `boxes/repo-form/`; the ceremony refuses to commit through a configuration you did not ratify. Re-run after any git configuration change. |
+
+**Stops.** Every stop names what is owed and the exact command that resumes. Exit 0 is done
+(including a run where every step was already done); 2 is refused, with the cure printed; 3 to 6
+are an action owed by you (a commit gate, a sibling checkout, an external step, the destructive
+authorization); 1 is a step that failed, with its own output. `--porcelain` emits one record per
+line for wrappers. A headless run commits only under a typed token and only content the ceremony
+itself wrote.
+
+**Records** live operator-side under `$XDG_STATE_HOME/orchard/records/<name>.d/`; artifacts do not
+travel with them, so a second machine re-executes the artifact steps rather than trusting a record
+about bytes it cannot see.
+
+**Relation to the by-hand path.** §4 to §6 are the same steps one verb at a time, and the ceremony
+calls the same code. What the ceremony does not do, and this guide does, is §7 to §13: the build
+variants, the pins, backup and restore, the OS update and key rotation.
