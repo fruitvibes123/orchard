@@ -597,7 +597,7 @@ do not flip it before then.
 | `config-virt not found in the pinned linux-virt apk` | the apk closure is stale — `refresh-apk-lock`. |
 | `docker build` fails on an apk version | a mirror superseded a pinned patch — bump the version in the Containerfile intentionally. |
 | `No space left on device` during cargo/kernel build | `/tmp` filled (needs ~15–20 GB). Clear leaked root-owned tempdirs: `docker run --rm -v /tmp:/t recipes-imgbuild:dev sh -c 'rm -rf /t/.tmp*'`. |
-| `repository-form-unmodelled` (guided ceremony) | the checkout's git configuration is not ratified, differs from the ratified declared space, or its ratified file cannot be read; the printed cure names the step (`orchard admit`, revert, or restore the file). [`docs/guided-quickstart.md`](docs/guided-quickstart.md) § Stops about the checkout's form. |
+| `repository-form-unmodelled` (guided ceremony) | the checkout's git configuration is not ratified, differs from the ratified declared space, or its ratified file cannot be read; the printed cure names the step (`orchard admit`, revert, or restore the file). [`docs/guided-quickstart.md`](docs/guided-quickstart.md) § Stops. |
 | `git-state-unreadable` … `bytes outside UTF-8` (guided ceremony) | a file name or configuration key in the checkout is outside UTF-8; the sample in the detail names it. Rename to UTF-8, re-run. |
 
 ### 9.1 Reclaim-tail manual disarm (rows `R-ARMED` / `R-DISARM`)
@@ -667,7 +667,7 @@ to the target.
 | `orchard market upgrade [--source <key> \| --binary <key> \| --config <key> \| --apks \| --kernel <version> \| --rust <version> \| --all] [--commit]` | re-pin a supply-chain leg (verify → stage → swap → authorize). |
 | `orchard guide <profile> [--repo-form-dir <dir>]` | the guided install ceremony: parameter interview, profile, one authorize, uninterrupted run. |
 | `orchard run <profile> --target <ip> [--repo-form-dir <dir>]` | re-run the ceremony over a saved profile; done steps SKIP. |
-| `orchard admit --box <profile> [--repo-form-dir <dir>]` | ratify a box's declared space: measure each named checkout's git configuration (every scope-qualified key; the value at the program-valued keys git executes inside the gate's commands), show the diff, write after an explicit typed authorize. Never runs a ceremony. Ratify after the first `guide` writes the profile, then before every `guide`/`run` and after any git configuration change; [`docs/guided-quickstart.md`](docs/guided-quickstart.md) § Ratify the declared space. |
+| `orchard admit --box <profile> [--repo-form-dir <dir>]` | ratify a box's declared space: measure each named checkout's git configuration (every scope-qualified key; the value at the program-valued keys git executes inside the gate's commands), show the diff, write after an explicit typed authorize. Never runs a ceremony. Ratify after the first `guide` writes the profile, then before every `guide`/`run` and after any git configuration change; [`docs/guided-quickstart.md`](docs/guided-quickstart.md) § Declared space. |
 | `orchard redelegate [--purpose all \| update-image \| root-hash \| weights]` | re-mint purpose delegations over the existing artifact root (§4.2, §13.2). |
 | `orchard update <host> --image <img> --identity <key> [--host-fingerprint SHA256:…]` | push a signed OS image to a running seabios-gpt box (§12). |
 | `orchard status <host> --ssh-identity <key> [--image <img>] [--keys-dir <dir>]` | read-only box inspection + drift comparison (§12, §13.3). |

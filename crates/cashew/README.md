@@ -1,57 +1,63 @@
 # cashew
 
-A pure-Rust, **verify-only** OpenPGP/RSA detached-signature checker: verify an armored detached
-signature (the kernel.org `linux-X.Y.Z.tar.sign` shape) over a caller-**streamed** byte sequence,
-against a caller-supplied **vendored keyring** filtered by caller-supplied **pinned fingerprints**.
-It is the verify primitive the `market upgrade --kernel` pin bump consumes; a verify BYPASS here
-would let an attacker-supplied kernel source tree enter the box build supply chain, so the whole
-crate is a whitelist — every form not explicitly permitted is a named `Error`, and refusal is the
-only non-success outcome.
+A pure-Rust, verify-only OpenPGP/RSA detached-signature checker. It verifies an armored detached
+signature (the kernel.org `linux-X.Y.Z.tar.sign` shape) over a caller-streamed byte sequence against a
+caller-supplied vendored keyring, filtered by caller-supplied pinned fingerprints. The
+`market upgrade --kernel` and `market upgrade --rust` pin bumps consume it. A verify bypass would let
+an attacker-supplied kernel source tree enter the box build supply chain, so the whole crate is a
+whitelist: every form it does not permit is a named `Error`, and refusal is the only non-success
+outcome.
 
-**This crate does NOT** sign, fetch, decompress, or wire itself to `--kernel` — those live in the
-consumer. It is the crate-scoped verify kernel only.
+cashew does not sign, fetch, decompress, or wire itself to `--kernel`; the consumer does those.
 
-## Design contract (one screen)
+## Design contract
 
 - **Whitelist grammar** (RFC 4880 subset): v4 signatures, RSA (pubkey algo 1), SHA-256/512 only.
   Every unlisted version / algorithm / packet tag / length form is a named `Err`.
-- **No-skip law:** every signature in a loadable keyring must cryptographically verify in its
-  positional role, or the whole load fails — no tolerate-and-skip channel.
-- **Issuer hints carry no trust:** `finalize` computes the digest once and tries
-  every validated candidate key of every pinned signer. `UnknownSigner` fires at **load** only (a
-  pin absent from the file); a failed verification is always `BadSignature`.
-- **SHA-1 is fingerprint-only:** constructed at exactly one site (`key.rs::v4_fingerprint`,
-  identification), never for any signature of any role. Any signature hash ∉ {8,10} is
-  `WeakHash(algo)` — one uniform class.
-- **Zero hand-rolled cryptography:** the RFC-4880 *format* layer is hand-rolled; all hashing / RSA
-  verification delegate to the in-tree `rsa` / `sha2` / `sha1` crates. **Zero net-new crates** enter
-  the workspace closure.
-- **No-panic parse paths** behind a `catch_unwind` boundary at every fallible public entry → a
-  structured `Error::ParserPanic`, never a crash. A `panic = "unwind"` compile guard keeps that
-  boundary armed.
-- **Sealed `Verified`:** no public constructor; holding one means a stream verified against a pinned
+- **No-skip law** (`Keyring::load`): every signature in a loadable keyring must cryptographically
+  verify in its positional role, or the whole load fails. There is no tolerate-and-skip channel.
+- **Pinned-bare exception** (`Keyring::load_pinned_bare`): loads a pinned single-purpose key whose
+  self-signatures are SHA-1. Trust comes from the consumer's sha256 pin of the key bytes and the
+  out-of-band-grounded fingerprint pins. It binds only each primary whose v4 fingerprint equals a pin,
+  never a subkey, runs no self-cert, validity or revocation processing, and rejects unaccounted-for
+  blocks. `tests/scoping.rs` allowlists its call sites to the rust bump.
+- **Issuer hints** carry no trust: `finalize` computes the digest once and tries every validated
+  candidate key of every pinned signer. `UnknownSigner` fires at load only (a pin absent from the
+  file); a failed verification is always `BadSignature`.
+- **SHA-1 scope**: fingerprints only. SHA-1 is constructed at exactly one site
+  (`key.rs::v4_fingerprint`, identification) and never for any signature of any role. Any signature
+  hash ∉ {8,10} is `WeakHash(algo)`, one uniform class.
+- **Zero hand-rolled cryptography**: the RFC-4880 format layer is hand-rolled; all hashing and RSA
+  verification delegate to the in-tree `rsa` / `sha2` / `sha1` crates. Zero net-new crates enter the
+  workspace closure.
+- **No-panic parse paths**: a `catch_unwind` boundary at every fallible public entry turns a parser
+  panic into a structured `Error::ParserPanic`, never a crash. A `panic = "unwind"` compile guard keeps
+  that boundary armed.
+- **Sealed `Verified`**: no public constructor; holding one means a stream verified against a pinned
   signer's validated key under the whole policy.
 
-The full design record and multi-round audit trail live in the operator's private engineering hub;
-this README carries the load-bearing contract.
+The full design record and the multi-round audit trail are kept in the operator's private
+engineering hub.
 
-**Known dependency advisory (inert here):** `rsa 0.9.10` carries RUSTSEC-2023-0071 (the "Marvin"
-timing side channel). It targets RSA **private-key** operations; cashew is verify-only (public inputs
-only), so it is inert by construction. See the rationale at the `rsa`
-dependency in `Cargo.toml` before ignoring the advisory or changing the `rsa` version.
+### Dependency advisory
 
-## Vendoring contract (for consumers)
+`rsa 0.9.10` carries RUSTSEC-2023-0071 (the "Marvin" timing side channel). The advisory targets RSA
+private-key operations, and cashew is verify-only on public inputs, so it is inert by construction.
+Read the rationale at the `rsa` dependency in `Cargo.toml` before ignoring the advisory or changing
+the `rsa` version.
 
-The keyring is NOT "whatever gpg exports" — it is a **minimized, attribute-free, pruned, armored**
-export from a named `pgpkeys.git` commit, produced with a **pinned toolchain** (gpg 2.4.9 /
-libgcrypt 1.12.2), then **sha256-pinned** by the consumer. See
-`tests/fixtures/README.md`. Key material comes from `pgpkeys.git` ONLY — never a keyserver.
+## Vendoring contract for consumers
+
+A keyring for `Keyring::load` is a minimized, attribute-free, pruned, armored export from a named
+`pgpkeys.git` commit, produced with a pinned toolchain (gpg 2.4.9 / libgcrypt 1.12.2) and then
+sha256-pinned by the consumer; an arbitrary gpg export does not qualify. Its key material comes from
+`pgpkeys.git` only, never a keyserver. Derivation: `tests/fixtures/README.md`.
 
 ## Guarantee evidence map
 
 | Guarantee | Evidenced by |
 |-----------|--------------|
-| Zero net-new external crates | `git diff <orchard-main> HEAD -- Cargo.lock` adds ONE `[[package]]`: `cashew` (see the closure below); `image-builder/tests/shipped_crate_allowlist.rs` carries the single new workspace entry, landed in the crate-creation commit |
+| Zero net-new external crates | `git diff <orchard-main> HEAD -- Cargo.lock` adds one `[[package]]`: `cashew` (see Shipped closure); `image-builder/tests/shipped_crate_allowlist.rs` carries the single new workspace entry, landed in the crate-creation commit |
 | Real-keyring anchors | `key.rs` `real_blocks_parse_and_fingerprints_match_pins` (computed fpr == pins), `real_self_cert_hash_algos_match_metadata` ([10,8,8]/[10]); `policy.rs` `real_blocks_validate_with_exactly_primary_candidates` (candidate set == {Primary}); `lib.rs` `real_issuer_consistency_anchor` (real `.sign` hashed issuer == Greg's pinned primary ∈ candidates) |
 | Differential positives | `verify.rs` `generated_positive_matrix_verifies` (16 gpg sigs incl. 5 MiB), `leading_zero_mpi_signature_verifies_via_padding`; `api.rs` `shape_a_verifies_via_primary` / `shape_b_verifies_via_subkey` / `chunk_invariance_end_to_end` |
 | Every grammar mutation → named class | `tests/negatives.rs` (the row-for-row coverage map) + the per-layer unit negatives it indexes (`sig.rs`, `key.rs`, `policy.rs`, `verify.rs`) |
@@ -62,18 +68,22 @@ libgcrypt 1.12.2), then **sha256-pinned** by the consumer. See
 
 ### Shipped closure (`cargo tree -p cashew --edges normal`)
 
-cashew's direct deps are `base64 0.22.1`, `rsa 0.9.10`, `sha1 0.10.6`, `sha2 0.10.9` — all at the
+cashew's direct deps are `base64 0.22.1`, `rsa 0.9.10`, `sha1 0.10.6` and `sha2 0.10.9`, all at the
 exact versions already in the pre-cashew `Cargo.lock`. Their transitive closure (const-oid, digest,
-num-bigint-dig, pkcs1/pkcs8/spki/der, signature, subtle, zeroize, …) was likewise already present via
-the workspace's other RustCrypto consumers. The verified proof is the one-line lock delta above:
-**adding cashew introduced exactly one new `[[package]]` stanza — its own.**
+num-bigint-dig, pkcs1/pkcs8/spki/der, signature, subtle, zeroize, …) was already present through the
+workspace's other RustCrypto consumers. The proof is the one-line lock delta in the evidence map:
+adding cashew introduced exactly one new `[[package]]` stanza, its own.
 
 ## Fixtures
 
-- `tests/fixtures/real/` — the vendored kernel.org material (Greg + Sasha pruned exports, a real
-  `linux-6.6.30.tar.sign`) + `METADATA.toml` (provenance, pins, recorded sizes + per-sig hash algos).
-  Deterministic, toolchain-pinned.
-- `tests/fixtures/gen/` — a throwaway differential corpus (both signing-key shapes, policy-negative
+Tests never invoke gpg. Regeneration: `tests/fixtures/README.md`.
+
+- `tests/fixtures/real/`: the vendored kernel.org material (Greg and Sasha pruned exports, a real
+  `linux-6.6.30.tar.sign`) and `METADATA.toml` (provenance, pins, recorded sizes and per-sig hash
+  algos). Deterministic, toolchain-pinned.
+- `tests/fixtures/gen/`: a throwaway differential corpus (both signing-key shapes, policy-negative
   keys, payloads × hashes, a leading-zero-MPI sig, a SHA-1 sig, an expiring sig). Regenerate with
-  `tests/fixtures/gen.sh` (dev-host only; gpg 2.4.x; keys are random per run — tests bind to
-  `gen/MANIFEST.toml`, never hardcoded fingerprints). Tests NEVER invoke gpg.
+  `tests/fixtures/gen.sh` (dev-host only; gpg 2.4.x). Keys are random per run, so tests bind to
+  `gen/MANIFEST.toml`, never to hardcoded fingerprints.
+- `tests/fixtures/rust/gen/`: the `load_pinned_bare` corpus (SHA-1-self-signed keys in the Rust
+  release key shape), regenerated with `tests/fixtures/rust/gen.sh`.
